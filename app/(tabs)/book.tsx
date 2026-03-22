@@ -5,7 +5,6 @@ import {
 	Animated,
 	ActivityIndicator,
 	FlatList,
-	Image,
 	Modal,
 	Platform,
 	Pressable,
@@ -55,6 +54,8 @@ type Barber = {
 	phone?: string;
 	zelle?: string;
 	cashapp?: string;
+	cash?: string;
+	paymentMethods?: string[];
 	specialties?: string;
 	hourlyRate?: number;
 	role?: 'barber' | 'stylist' | 'BARBER' | 'STYLIST';
@@ -78,6 +79,10 @@ type RawBarber = {
 	phone?: string;
 	zelle?: string;
 	cashapp?: string;
+	cash?: string;
+	paymentMethods?: string[];
+	payment_methods?: string[];
+	paymentMethod?: string[];
 	specialties?: string;
 	hourlyRate?: number;
 	role?: string;
@@ -106,6 +111,30 @@ type VisualConfig = {
 	barberImage?: string;
 	stylistImage?: string;
 };
+
+type CategoryKey = 'men' | 'women';
+
+type Category = {
+	id: CategoryKey;
+	label: string;
+	imageUrl?: string;
+	type: 'BARBER' | 'STYLIST';
+};
+
+const CATEGORY_FALLBACKS: Category[] = [
+	{
+		id: 'men',
+		label: 'Men',
+		imageUrl: 'https://images.unsplash.com/photo-1517836357463-d25dfeac3438',
+		type: 'BARBER',
+	},
+	{
+		id: 'women',
+		label: 'Women',
+		imageUrl: 'https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9',
+		type: 'STYLIST',
+	},
+];
 
 function toStartOfDay(date: Date) {
 	const next = new Date(date);
@@ -220,6 +249,8 @@ function normalizeBarber(raw: RawBarber, index: number): Barber {
 	const name = resolveBarberName(raw);
 	const role = raw.role as Barber['role'] | undefined;
 	const gender = normalizeGender(raw.gender) || normalizeGender(role);
+	const paymentMethods =
+		raw.paymentMethods || raw.payment_methods || raw.paymentMethod || [];
 	return {
 		id: resolveBarberId(raw, index),
 		user: { name },
@@ -233,6 +264,8 @@ function normalizeBarber(raw: RawBarber, index: number): Barber {
 		phone: resolveBarberPhone(raw) ?? undefined,
 		zelle: raw.zelle,
 		cashapp: raw.cashapp,
+		cash: raw.cash,
+		paymentMethods: Array.isArray(paymentMethods) ? paymentMethods : [],
 		specialties: raw.specialties,
 		hourlyRate:
 			typeof raw.hourlyRate === 'number' && Number.isFinite(raw.hourlyRate)
@@ -275,6 +308,8 @@ export default function Book() {
 	const [selectedBarber, setSelectedBarber] = useState<string | null>(null);
 	const [selectedCategory, setSelectedCategory] = useState<'MALE' | 'FEMALE'>('MALE');
 	const [selectedGender, setSelectedGender] = useState<'men' | 'women'>('men');
+	const [categories, setCategories] = useState<Category[]>([]);
+	const [selectedCategoryKey, setSelectedCategoryKey] = useState<CategoryKey>('men');
 	const [selectedService, setSelectedService] = useState<string | null>(null);
 	const [appointmentDateTime, setAppointmentDateTime] = useState<Date | null>(null);
 	const [selectedDate, setSelectedDate] = useState(new Date());
@@ -284,6 +319,7 @@ export default function Book() {
 	const [blockedSlots, setBlockedSlots] = useState<string[]>([]);
 	const [showCalendar, setShowCalendar] = useState(false);
 	const [policyAccepted, setPolicyAccepted] = useState(false);
+	const [showPolicyModal, setShowPolicyModal] = useState(false);
 	const [showDepositModal, setShowDepositModal] = useState(false);
 	const [depositMethod, setDepositMethod] = useState<DepositMethod | null>(null);
 	const [isConfirming, setIsConfirming] = useState(false);
@@ -333,10 +369,37 @@ export default function Book() {
 	}, [params.barberId]);
 
 	useEffect(() => {
+		const loadCategories = async () => {
+			try {
+				const snapshot = await getDocs(collection(db, 'categories'));
+				const next = snapshot.docs
+					.map((docSnap) => {
+						const id = docSnap.id as CategoryKey;
+						const data = docSnap.data() as Omit<Category, 'id'>;
+						return {
+							id,
+							label: data.label ?? (id === 'women' ? 'Women' : 'Men'),
+							imageUrl: data.imageUrl,
+							type: data.type ?? (id === 'women' ? 'STYLIST' : 'BARBER'),
+						};
+					})
+					.filter((item) => item.id === 'men' || item.id === 'women');
+				setCategories(next);
+			} catch (error) {
+				console.warn('Error loading categories (firestore):', error);
+				setCategories([]);
+			}
+		};
+
+		void loadCategories();
+	}, []);
+
+	useEffect(() => {
 		const resolved = resolveGenderFromParam(params.targetGender);
 		if (!resolved) return;
 		setSelectedGender(resolved);
 		setSelectedCategory(resolved === 'women' ? 'FEMALE' : 'MALE');
+		setSelectedCategoryKey(resolved);
 	}, [params.targetGender]);
 
 	useEffect(() => {
@@ -363,15 +426,48 @@ export default function Book() {
 		return [favorite, ...filtered.filter((barber) => barber !== favorite)];
 	}, [allBarbers, favoriteBarberId]);
 
-	const professionals = selectedGender === 'women'
-		? (stylists.length > 0 ? stylists : allBarbers)
-		: (barbers.length > 0 ? barbers : allBarbers);
+	const selectedBarberData = useMemo(() => {
+		return allBarbers.find((barber) => barber.id === selectedBarber) ?? null;
+	}, [allBarbers, selectedBarber]);
+
+	const barberPaymentMethods = useMemo(() => {
+		const methods = new Set<string>();
+		const rawMethods = (selectedBarberData as Barber | null)?.paymentMethods ?? [];
+		rawMethods.forEach((method) => methods.add(method.toLowerCase()));
+		if ((selectedBarberData as Barber | null)?.cashapp) methods.add('cashapp');
+		if ((selectedBarberData as Barber | null)?.zelle) methods.add('zelle');
+		if ((selectedBarberData as Barber | null)?.cash) methods.add('cash');
+		const labelFor = (value: string) => {
+			switch (value) {
+				case 'cashapp':
+					return 'CashApp';
+				case 'zelle':
+					return 'Zelle';
+				case 'cash':
+					return 'Cash';
+				default:
+					return value.charAt(0).toUpperCase() + value.slice(1);
+			}
+		};
+		return Array.from(methods).map(labelFor);
+	}, [selectedBarberData]);
+
+	const selectedCategoryType = useMemo(() => {
+		const match = categories.find((item) => item.id === selectedCategoryKey);
+		return match?.type ?? (selectedCategoryKey === 'women' ? 'STYLIST' : 'BARBER');
+	}, [categories, selectedCategoryKey]);
+
+	const filteredProfessionals = useMemo(() => {
+		const targetRole = selectedCategoryType.toLowerCase();
+		const filtered = allBarbers.filter((barber) => {
+			const role = barber.role?.toLowerCase();
+			return role === targetRole;
+		});
+		return filtered.length > 0 ? filtered : allBarbers;
+	}, [allBarbers, selectedCategoryType]);
 
 	const selectedBarberName = useMemo(() => {
 		return allBarbers.find((barber) => barber.id === selectedBarber)?.user?.name ?? 'Unknown';
-	}, [allBarbers, selectedBarber]);
-	const selectedBarberData = useMemo(() => {
-		return allBarbers.find((barber) => barber.id === selectedBarber) ?? null;
 	}, [allBarbers, selectedBarber]);
 	const selectedBarberPhone = useMemo(() => {
 		return allBarbers.find((barber) => barber.id === selectedBarber)?.phone ?? null;
@@ -436,12 +532,12 @@ export default function Book() {
 
 	useEffect(() => {
 		setSelectedBarber((current) => {
-			if (professionals.length === 0) return null;
-			if (!current) return professionals[0]?.id ?? null;
-			const stillValid = professionals.some((barber) => barber.id === current);
-			return stillValid ? current : (professionals[0]?.id ?? null);
+			if (filteredProfessionals.length === 0) return null;
+			if (!current) return filteredProfessionals[0]?.id ?? null;
+			const stillValid = filteredProfessionals.some((barber) => barber.id === current);
+			return stillValid ? current : (filteredProfessionals[0]?.id ?? null);
 		});
-	}, [professionals]);
+	}, [filteredProfessionals]);
 
 	const todayDate = useMemo(() => toStartOfDay(new Date()), []);
 	const tomorrowDate = useMemo(() => {
@@ -770,71 +866,55 @@ export default function Book() {
 				<View style={styles.section}>
 					<Text style={styles.sectionTitle}>Select Category</Text>
 					<View style={{ flexDirection: 'row', gap: 12, marginTop: 10 }}>
-						<TouchableOpacity
-							onPress={() => {
-								setSelectedGender('men');
-								setSelectedCategory('MALE');
-							}}
-							style={{
-								flex: 1,
-								backgroundColor: selectedGender === 'men' ? '#00d4ff' : '#000',
-								borderColor: '#111',
-								borderWidth: 1,
-								borderRadius: 16,
-								overflow: 'hidden',
-							}}
-						>
-							<Image
-								source={{ uri: 'https://images.unsplash.com/photo-1517836357463-d25dfeac3438' }}
-								style={{ width: '100%', height: 120 }}
-							/>
-							<Text
-								style={{
-									color: selectedGender === 'men' ? '#000' : '#fff',
-									textAlign: 'center',
-									padding: 10,
-									fontWeight: 'bold',
-								}}
-							>
-								MEN
-							</Text>
-						</TouchableOpacity>
-						<TouchableOpacity
-							onPress={() => {
-								setSelectedGender('women');
-								setSelectedCategory('FEMALE');
-							}}
-							style={{
-								flex: 1,
-								backgroundColor: selectedGender === 'women' ? '#00d4ff' : '#000',
-								borderColor: '#111',
-								borderWidth: 1,
-								borderRadius: 16,
-								overflow: 'hidden',
-							}}
-						>
-							<Image
-								source={{ uri: 'https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9' }}
-								style={{ width: '100%', height: 120 }}
-							/>
-							<Text
-								style={{
-									color: selectedGender === 'women' ? '#000' : '#fff',
-									textAlign: 'center',
-									padding: 10,
-									fontWeight: 'bold',
-								}}
-							>
-								WOMEN
-							</Text>
-						</TouchableOpacity>
+						{(categories.length > 0 ? categories : CATEGORY_FALLBACKS).map(
+							(categoryItem) => {
+								const isActive = selectedCategoryKey === categoryItem.id;
+								return (
+									<TouchableOpacity
+										key={categoryItem.id}
+										onPress={() => {
+											setSelectedCategoryKey(categoryItem.id);
+											setSelectedGender(categoryItem.id);
+											setSelectedCategory(
+												categoryItem.id === 'women' ? 'FEMALE' : 'MALE'
+											);
+										}}
+										style={{
+											flex: 1,
+											backgroundColor: isActive ? '#00d4ff' : '#000',
+											borderColor: '#111',
+											borderWidth: 1,
+											borderRadius: 16,
+											overflow: 'hidden',
+										}}
+									>
+										<SafeImage
+											uri={categoryItem.imageUrl}
+											fallbackSource={require('../../assets/placeholder-service.png')}
+											style={{ width: '100%', height: 120 }}
+											resizeMode="cover"
+										/>
+										<Text
+											style={{
+												color: isActive ? '#000' : '#fff',
+												textAlign: 'center',
+												padding: 10,
+												fontWeight: 'bold',
+											}}
+										>
+											{categoryItem.label.toUpperCase()}
+										</Text>
+									</TouchableOpacity>
+								);
+							}
+						)}
 					</View>
 				</View>
 
 				<View style={styles.section}>
 					<Text style={styles.sectionTitle}>Select Professional</Text>
 					<FlatList
-						data={professionals}
+						data={filteredProfessionals}
 						horizontal
 						showsHorizontalScrollIndicator={false}
 						keyExtractor={(item) => item.id}
@@ -875,16 +955,7 @@ export default function Book() {
 							</Text>
 						</TouchableOpacity>
 					) : null}
-					{selectedBarberData?.zelle || selectedBarberData?.cashapp ? (
-						<View style={{ marginTop: 10, gap: 6 }}>
-							{selectedBarberData?.zelle ? (
-								<Text style={{ color: '#9aa0a6' }}>Zelle: {selectedBarberData.zelle}</Text>
-							) : null}
-							{selectedBarberData?.cashapp ? (
-								<Text style={{ color: '#9aa0a6' }}>CashApp: {selectedBarberData.cashapp}</Text>
-							) : null}
-						</View>
-					) : null}
+
 				</View>
 
 				<View style={styles.section}>
@@ -1105,41 +1176,88 @@ export default function Book() {
 					) : null}
 				</View>
 
-				<View style={styles.policyCard}>
-					<Text style={styles.policyTitle}>Booking Policy</Text>
-					<Text style={styles.policyText}>
-						By booking this appointment you agree to the shop policy.
-					</Text>
-					<View style={styles.policyList}>
-						<Text style={styles.policyBullet}>• $5 deposit required</Text>
-						<Text style={styles.policyBullet}>• Deposit is credited to the service</Text>
-						<Text style={styles.policyBullet}>• Deposit is lost if you do not show up</Text>
-						<Text style={styles.policyBullet}>• You may reschedule with at least 24 hours notice</Text>
-					</View>
-					<Pressable
-						style={styles.policyCheckRow}
-						onPress={() => setPolicyAccepted((prev) => !prev)}
-					>
-						<View
-							style={[
-								styles.checkbox,
-								policyAccepted && styles.checkboxChecked,
-							]}
-						>
-							{policyAccepted ? <Text style={styles.checkboxMark}>✓</Text> : null}
-						</View>
-						<Text style={styles.policyCheckText}>I agree to the booking policy</Text>
-					</Pressable>
-				</View>
-
 				<Pressable
-					style={[styles.confirmButton, !policyAccepted && styles.confirmButtonDisabled]}
-					onPress={handleConfirmBooking}
-					disabled={!policyAccepted}
+					style={styles.confirmButton}
+					onPress={() => {
+						setPolicyAccepted(false);
+						setShowPolicyModal(true);
+					}}
 				>
 					<Text style={styles.confirmText}>Confirm Booking</Text>
 				</Pressable>
 			</ScrollView>
+
+			<Modal
+				visible={showPolicyModal}
+				transparent
+				animationType="fade"
+				onRequestClose={() => setShowPolicyModal(false)}
+			>
+				<View style={styles.policyModalBackdrop}>
+					<View style={styles.policyModalCard}>
+						<Text style={styles.policyModalTitle}>Booking Policy</Text>
+						<View style={styles.policyModalBody}>
+							<Text style={styles.policyModalBullet}>• Please arrive on time.</Text>
+							<Text style={styles.policyModalBullet}>• 10-minute late limit before cancellation.</Text>
+							<Text style={styles.policyModalBullet}>
+								• Deposits are non-refundable (if applicable).
+							</Text>
+							<Text style={styles.policyModalBullet}>
+								• No-shows may be restricted from future bookings.
+							</Text>
+						</View>
+
+						{barberPaymentMethods.length > 0 ? (
+							<View style={styles.policyModalBody}>
+								<Text style={styles.policyModalSectionTitle}>Barber accepts:</Text>
+								{barberPaymentMethods.map((method) => (
+									<Text key={method} style={styles.policyModalBullet}>
+										• {method}
+									</Text>
+								))}
+							</View>
+						) : null}
+
+						<Pressable
+							style={styles.policyCheckRow}
+							onPress={() => setPolicyAccepted((prev) => !prev)}
+						>
+							<View
+								style={[
+									styles.checkbox,
+									policyAccepted && styles.checkboxChecked,
+								]}
+							>
+								{policyAccepted ? <Text style={styles.checkboxMark}>✓</Text> : null}
+							</View>
+							<Text style={styles.policyCheckText}>I agree to the booking policy</Text>
+						</Pressable>
+
+						<View style={styles.policyModalActions}>
+							<Pressable
+								style={styles.policyCancelButton}
+								onPress={() => setShowPolicyModal(false)}
+							>
+								<Text style={styles.policyCancelText}>Cancel</Text>
+							</Pressable>
+							<Pressable
+								style={[
+									styles.policyConfirmButton,
+									!policyAccepted && styles.policyConfirmDisabled,
+								]}
+								onPress={async () => {
+									if (!policyAccepted) return;
+									setShowPolicyModal(false);
+									await handleConfirmBooking();
+								}}
+								disabled={!policyAccepted}
+							>
+								<Text style={styles.policyConfirmText}>Accept & Confirm</Text>
+							</Pressable>
+						</View>
+					</View>
+				</View>
+			</Modal>
 
 			<Modal
 				visible={showDepositModal}
@@ -1607,6 +1725,70 @@ backgroundColor: '#000',
 		color: '#ffffff',
 		fontSize: 13,
 		fontWeight: '600',
+	},
+	policyModalBackdrop: {
+		flex: 1,
+		backgroundColor: 'rgba(0,0,0,0.6)',
+		justifyContent: 'center',
+		padding: 20,
+	},
+	policyModalCard: {
+		backgroundColor: '#000',
+		borderRadius: 16,
+		padding: 18,
+		borderWidth: 1,
+		borderColor: 'rgba(225, 6, 0, 0.85)',
+		gap: 14,
+	},
+	policyModalTitle: {
+		color: '#ffffff',
+		fontSize: 18,
+		fontWeight: '700',
+	},
+	policyModalBody: {
+		gap: 6,
+	},
+	policyModalSectionTitle: {
+		color: '#ffffff',
+		fontSize: 14,
+		fontWeight: '700',
+		marginTop: 2,
+	},
+	policyModalBullet: {
+		color: '#9aa0a6',
+		fontSize: 13,
+	},
+	policyModalActions: {
+		flexDirection: 'row',
+		gap: 10,
+	},
+	policyCancelButton: {
+		flex: 1,
+		borderWidth: 1,
+		borderColor: 'rgba(225, 6, 0, 0.85)',
+		borderRadius: 12,
+		paddingVertical: 12,
+		alignItems: 'center',
+	},
+	policyCancelText: {
+		color: '#ffffff',
+		fontSize: 13,
+		fontWeight: '700',
+	},
+	policyConfirmButton: {
+		flex: 1,
+		backgroundColor: '#e10600',
+		borderRadius: 12,
+		paddingVertical: 12,
+		alignItems: 'center',
+	},
+	policyConfirmDisabled: {
+		opacity: 0.5,
+	},
+	policyConfirmText: {
+		color: '#ffffff',
+		fontSize: 13,
+		fontWeight: '700',
 	},
 	confirmButton: {
 		backgroundColor: '#e10600',
