@@ -11,8 +11,10 @@
     "serve": "firebase emulators:start --only functions"
   },
   "dependencies": {
+    "cloudinary": "^2.9.0",
     "firebase-admin": "^12.6.0",
     "firebase-functions": "^4.9.0",
+    "stripe": "^14.25.0",
     "twilio": "^5.4.2"
   },
   "devDependencies": {

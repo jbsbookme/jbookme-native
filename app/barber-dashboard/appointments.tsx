@@ -6,8 +6,11 @@ import {
 	Text,
 	View,
 	FlatList,
+	Pressable,
 } from 'react-native';
 import { collection, doc, getDoc, getDocs, orderBy, query, where } from 'firebase/firestore';
+import { Ionicons } from '@expo/vector-icons';
+import { Calendar } from 'react-native-calendars';
 import { useAuth } from '@/contexts/AuthContext';
 import { auth, db } from '@/config/firebase';
 
@@ -54,6 +57,13 @@ function formatDateLabelFromKey(dateKey: string) {
 	const day = Number(match[3]);
 	const label = MONTH_LABELS[monthIndex] ?? match[2];
 	return `${label} ${day}`;
+}
+
+function formatDateKeyFromDateLocal(value: Date) {
+	const year = value.getFullYear();
+	const month = `${value.getMonth() + 1}`.padStart(2, '0');
+	const day = `${value.getDate()}`.padStart(2, '0');
+	return `${year}-${month}-${day}`;
 }
 
 function toDate(value?: AppointmentItem['date'] | AppointmentItem['time']) {
@@ -111,6 +121,11 @@ export default function BarberAppointments() {
 	const { user } = useAuth();
 	const [appointments, setAppointments] = useState<AppointmentItem[]>([]);
 	const [loading, setLoading] = useState(true);
+	const [showCalendar, setShowCalendar] = useState(false);
+	const [selectedDate, setSelectedDate] = useState(
+		formatDateKeyFromDateLocal(new Date())
+	);
+	const [showAll, setShowAll] = useState(true);
 
 	const sortedAppointments = useMemo(() => {
 		return [...appointments].sort((left, right) => {
@@ -119,6 +134,18 @@ export default function BarberAppointments() {
 			return rightDate.getTime() - leftDate.getTime();
 		});
 	}, [appointments]);
+
+	const filteredAppointments = useMemo(() => {
+		if (showAll || !selectedDate) return sortedAppointments;
+		return sortedAppointments.filter((item) => {
+			const dateValue = toDate(item.date ?? item.time);
+			if (!dateValue) return false;
+			return formatDateKeyFromDateLocal(dateValue) === selectedDate;
+		});
+	}, [selectedDate, showAll, sortedAppointments]);
+
+	const visibleCount = filteredAppointments.length;
+	const totalCount = sortedAppointments.length;
 
 	useEffect(() => {
 		const loadAppointments = async () => {
@@ -137,20 +164,31 @@ export default function BarberAppointments() {
 					where('userId', '==', uid)
 				);
 				const barberSnapshot = await getDocs(barberQuery);
-				if (barberSnapshot.empty) {
+				const barberSnapshotDoc = barberSnapshot.docs[0];
+				const barberDocId = barberSnapshotDoc?.id ?? null;
+				const barberData = barberSnapshotDoc?.data() as
+					| { userId?: string; prismaBarberId?: string }
+					| undefined;
+				const barberIds = [
+					barberDocId,
+					barberData?.userId,
+					barberData?.prismaBarberId,
+					uid,
+				].filter((value): value is string => Boolean(value));
+				const uniqueIds = Array.from(new Set(barberIds));
+				if (uniqueIds.length === 0) {
 					console.log('BARBER DOC NOT FOUND');
 					setAppointments([]);
 					setLoading(false);
 					return;
 				}
-				const barberSnapshotDoc = barberSnapshot.docs[0];
-				const barberDocId = barberSnapshotDoc.id;
-				console.log('BARBER DOC ID:', barberDocId);
+				console.log('BARBER IDS:', uniqueIds.join(', '));
 
-				const q = query(
-					collection(db, 'appointments'),
-					where('barberId', '==', barberDocId)
-				);
+				const baseRef = collection(db, 'appointments');
+				const q =
+					uniqueIds.length === 1
+						? query(baseRef, where('barberId', '==', uniqueIds[0]))
+						: query(baseRef, where('barberId', 'in', uniqueIds.slice(0, 10)));
 
 				const snapshot = await getDocs(q);
 				const data = snapshot.docs.map((docItem) => ({
@@ -201,6 +239,52 @@ export default function BarberAppointments() {
 			<View style={styles.header}>
 				<Text style={styles.title}>Appointment History</Text>
 				<Text style={styles.subtitle}>All appointments for your chair.</Text>
+				<View style={styles.pickDateRow}>
+					<Pressable
+						style={styles.pickDateButton}
+						onPress={() => setShowCalendar((current) => !current)}
+					>
+						<Ionicons name="calendar" size={18} color="#00f0ff" />
+						<Text style={styles.pickDateText}>Pick Date</Text>
+					</Pressable>
+					<Pressable
+						style={[styles.pickDateButton, showAll && styles.pickDateButtonActive]}
+						onPress={() => setShowAll((current) => !current)}
+					>
+						<Ionicons name="list" size={18} color="#00f0ff" />
+						<Text style={styles.pickDateText}>Show All</Text>
+					</Pressable>
+					<Text style={styles.pickDateLabel}>
+						{showAll ? 'All dates' : formatDateLabelFromKey(selectedDate)}
+					</Text>
+				</View>
+				<Text style={styles.countText}>
+					Showing {visibleCount} of {totalCount} appointments
+				</Text>
+				{showCalendar ? (
+					<View style={styles.calendarWrap}>
+						<Calendar
+							minDate={new Date().toISOString().slice(0, 10)}
+							onDayPress={(day) => {
+								setSelectedDate(day.dateString);
+								setShowCalendar(false);
+							}}
+							markedDates={{
+								[selectedDate]: { selected: true, selectedColor: '#00f0ff' },
+							}}
+							theme={{
+								backgroundColor: '#000',
+								calendarBackground: '#000',
+								textSectionTitleColor: '#9aa0a6',
+								dayTextColor: '#ffffff',
+								monthTextColor: '#ffffff',
+								todayTextColor: '#ffd700',
+								arrowColor: '#00f0ff',
+								textDisabledColor: 'rgba(255,255,255,0.3)',
+							}}
+						/>
+					</View>
+				) : null}
 			</View>
 			{loading ? (
 				<View style={styles.loadingRow}>
@@ -209,7 +293,7 @@ export default function BarberAppointments() {
 				</View>
 			) : (
 				<FlatList
-					data={sortedAppointments}
+					data={filteredAppointments}
 					keyExtractor={(item) => item.id}
 					renderItem={({ item }) => {
 						console.log('APPOINTMENT BARBER ID:', item.barberId);
@@ -265,13 +349,55 @@ const styles = StyleSheet.create({
 		color: '#9aa0a6',
 		fontSize: 13,
 	},
+	pickDateRow: {
+		marginTop: 8,
+		flexDirection: 'row',
+		alignItems: 'center',
+		gap: 10,
+		flexWrap: 'wrap',
+	},
+	pickDateButton: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		gap: 8,
+		borderWidth: 1,
+		borderColor: 'rgba(225, 6, 0, 0.85)',
+		borderRadius: 12,
+		paddingVertical: 10,
+		paddingHorizontal: 12,
+	},
+	pickDateButtonActive: {
+		backgroundColor: 'rgba(0,240,255,0.12)',
+	},
+	pickDateText: {
+		color: '#ffffff',
+		fontSize: 13,
+		fontWeight: '600',
+	},
+	pickDateLabel: {
+		color: '#00f0ff',
+		fontSize: 13,
+		fontWeight: '600',
+	},
+	countText: {
+		color: '#9aa0a6',
+		fontSize: 12,
+	},
+	calendarWrap: {
+		marginTop: 12,
+		borderWidth: 1,
+		borderColor: 'rgba(225, 6, 0, 0.85)',
+		borderRadius: 12,
+		overflow: 'hidden',
+		backgroundColor: '#000',
+	},
 	list: {
 		paddingHorizontal: 20,
 		paddingBottom: 24,
 		gap: 12,
 	},
 	card: {
-backgroundColor: '#000',
+		backgroundColor: '#000',
 		borderRadius: 12,
 		padding: 16,
 		borderWidth: 1,

@@ -385,16 +385,45 @@ export default function BarberDashboard() {
 				setLoadingRevenue(false);
 				return;
 			}
-			const barberQuery = query(collection(db, 'barbers'), where('userId', '==', uid));
-			const barberSnapshot = await getDocs(barberQuery);
-			if (barberSnapshot.empty) {
+			const findBarberDoc = async () => {
+				const userIdQuery = query(collection(db, 'barbers'), where('userId', '==', uid));
+				const userIdSnapshot = await getDocs(userIdQuery);
+				if (!userIdSnapshot.empty) return userIdSnapshot.docs[0];
+				const uidQuery = query(collection(db, 'barbers'), where('uid', '==', uid));
+				const uidSnapshot = await getDocs(uidQuery);
+				if (!uidSnapshot.empty) return uidSnapshot.docs[0];
+				if (user?.email) {
+					const emailQuery = query(
+						collection(db, 'barbers'),
+						where('email', '==', user.email)
+					);
+					const emailSnapshot = await getDocs(emailQuery);
+					if (!emailSnapshot.empty) return emailSnapshot.docs[0];
+				}
+				const prismaQuery = query(
+					collection(db, 'barbers'),
+					where('prismaBarberId', '==', uid)
+				);
+				const prismaSnapshot = await getDocs(prismaQuery);
+				if (!prismaSnapshot.empty) return prismaSnapshot.docs[0];
+				const allSnapshot = await getDocs(collection(db, 'barbers'));
+				return allSnapshot.docs.find((docSnap) => {
+					const data = docSnap.data() as {
+						userId?: string;
+						uid?: string;
+						prismaBarberId?: string;
+					};
+					return data.userId === uid || data.uid === uid || data.prismaBarberId === uid;
+				});
+			};
+			const barberSnapshotDoc = await findBarberDoc();
+			if (!barberSnapshotDoc) {
 				setBarberId(null);
 				setBarberDocId(null);
 				setLoadingAppointments(false);
 				setLoadingRevenue(false);
 				return;
 			}
-			const barberSnapshotDoc = barberSnapshot.docs[0];
 			const barberDoc = barberSnapshotDoc.data() as {
 				prismaBarberId?: string;
 				instagram?: string;
@@ -402,7 +431,11 @@ export default function BarberDashboard() {
 				tiktok?: string;
 				website?: string;
 				zelle?: string;
+				zelleEmail?: string;
+				zellePhone?: string;
 				cashapp?: string;
+				cashApp?: string;
+				cashappTag?: string;
 				workingHours?: Record<string, WorkingHours>;
 			};
 			setBarberDocId(barberSnapshotDoc.id);
@@ -414,8 +447,8 @@ export default function BarberDashboard() {
 				website: barberDoc.website ?? '',
 			});
 			setPaymentAccounts({
-				zelle: barberDoc.zelle ?? '',
-				cashapp: barberDoc.cashapp ?? '',
+				zelle: barberDoc.zelle ?? barberDoc.zelleEmail ?? barberDoc.zellePhone ?? '',
+				cashapp: barberDoc.cashapp ?? barberDoc.cashappTag ?? barberDoc.cashApp ?? '',
 			});
 			if (barberDoc.workingHours) {
 				setWorkingHours((current) => {
@@ -743,34 +776,77 @@ export default function BarberDashboard() {
 	}, []);
 
 	const handleSaveSocials = useCallback(async () => {
-		if (!barberDocId || savingSocials) return;
+		if (savingSocials) return;
+		if (!user?.uid) {
+			Alert.alert('Sign in required', 'Please sign in to save social links.');
+			return;
+		}
 		setSavingSocials(true);
 		try {
-			await updateDoc(doc(db, 'barbers', barberDocId), {
+			const payload = {
 				instagram: socialLinks.instagram.trim(),
 				facebook: socialLinks.facebook.trim(),
 				tiktok: socialLinks.tiktok.trim(),
 				website: socialLinks.website.trim(),
-			});
+			};
+			if (barberDocId) {
+				await updateDoc(doc(db, 'barbers', barberDocId), payload);
+			} else {
+				const docRef = await addDoc(collection(db, 'barbers'), {
+					userId: user.uid,
+					uid: user.uid,
+					email: user.email ?? '',
+					name: user.displayName ?? 'Barber',
+					...payload,
+				});
+				setBarberDocId(docRef.id);
+				setBarberId(docRef.id);
+			}
 			setIsEditingSocials(false);
+		} catch (error) {
+			console.log('[BarberDashboard] save socials error:', error);
+			Alert.alert('Save failed', 'Unable to save social links.');
 		} finally {
 			setSavingSocials(false);
 		}
-	}, [barberDocId, savingSocials, socialLinks]);
+	}, [barberDocId, savingSocials, socialLinks, user?.displayName, user?.email, user?.uid]);
 
 	const handleSavePayments = useCallback(async () => {
-		if (!barberDocId || savingPayments) return;
+		if (savingPayments) return;
+		if (!user?.uid) {
+			Alert.alert('Sign in required', 'Please sign in to save payment info.');
+			return;
+		}
 		setSavingPayments(true);
 		try {
-			await updateDoc(doc(db, 'barbers', barberDocId), {
+			const payload = {
 				zelle: paymentAccounts.zelle.trim(),
+				zelleEmail: paymentAccounts.zelle.trim(),
 				cashapp: paymentAccounts.cashapp.trim(),
-			});
+				cashApp: paymentAccounts.cashapp.trim(),
+				cashappTag: paymentAccounts.cashapp.trim(),
+			};
+			if (barberDocId) {
+				await updateDoc(doc(db, 'barbers', barberDocId), payload);
+			} else {
+				const docRef = await addDoc(collection(db, 'barbers'), {
+					userId: user.uid,
+					uid: user.uid,
+					email: user.email ?? '',
+					name: user.displayName ?? 'Barber',
+					...payload,
+				});
+				setBarberDocId(docRef.id);
+				setBarberId(docRef.id);
+			}
 			setIsEditingPayments(false);
+		} catch (error) {
+			console.log('[BarberDashboard] save payments error:', error);
+			Alert.alert('Save failed', 'Unable to save payment info.');
 		} finally {
 			setSavingPayments(false);
 		}
-	}, [barberDocId, paymentAccounts, savingPayments]);
+	}, [barberDocId, paymentAccounts, savingPayments, user?.displayName, user?.email, user?.uid]);
 
 	const handleSaveWorkingHours = useCallback(async () => {
 		if (!barberDocId || savingSchedule) return;

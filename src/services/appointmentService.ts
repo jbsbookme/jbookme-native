@@ -61,6 +61,12 @@ type RawAppointment = {
   photoUrl?: string;
 };
 
+type BarberLookupItem = {
+  name?: string;
+  profileImage?: string;
+  role?: string;
+};
+
 async function fetchAppointmentsFromFirestore(): Promise<RawAppointment[]> {
   const snapshot = await getDocs(collection(db, 'appointments'));
   return snapshot.docs.map((doc) => ({
@@ -153,6 +159,29 @@ function resolveImage(raw: RawAppointment) {
   );
 }
 
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+async function fetchBarbersByField(field: string, ids: string[]) {
+  if (ids.length === 0) return [];
+  const chunks = chunkArray(ids, 10);
+  const results: Record<string, unknown>[] = [];
+  for (const chunk of chunks) {
+    const snap = await getDocs(
+      query(collection(db, 'barbers'), where(field, 'in', chunk))
+    );
+    snap.docs.forEach((docSnap) => {
+      results.push({ id: docSnap.id, ...(docSnap.data() as Record<string, unknown>) });
+    });
+  }
+  return results;
+}
+
 export async function fetchTodayAppointments(): Promise<TodayAppointment[]> {
   try {
     const appointments = await fetchAppointmentsFromFirestore();
@@ -181,7 +210,7 @@ export async function fetchTodayAppointments(): Promise<TodayAppointment[]> {
         }
       })
     );
-    const barberLookup = barberDocs.reduce<Record<string, { name?: string; profileImage?: string; role?: string }>>(
+    const barberLookup = barberDocs.reduce<Record<string, BarberLookupItem>>(
       (acc, barber) => {
         if (!barber || typeof barber.id !== 'string') return acc;
         const data = barber as {
@@ -200,6 +229,32 @@ export async function fetchTodayAppointments(): Promise<TodayAppointment[]> {
       },
       {}
     );
+
+    const barberByUserId = await fetchBarbersByField('userId', uniqueBarberIds);
+    const barberByPrismaId = await fetchBarbersByField('prismaBarberId', uniqueBarberIds);
+    const aliasLookup = [...barberByUserId, ...barberByPrismaId].reduce<Record<string, BarberLookupItem>>(
+      (acc, barber) => {
+        if (!barber) return acc;
+        const data = barber as {
+          id?: string;
+          name?: string;
+          user?: { name?: string };
+          profileImage?: string;
+          role?: string;
+          userId?: string;
+          prismaBarberId?: string;
+        };
+        const key = data.userId ?? data.prismaBarberId;
+        if (!key) return acc;
+        acc[key] = {
+          name: data.name ?? data.user?.name,
+          profileImage: data.profileImage,
+          role: data.role,
+        };
+        return acc;
+      },
+      {}
+    );
     const seen = new Set<string>();
     const results: TodayAppointment[] = [];
     filtered.forEach((appointment, index) => {
@@ -208,7 +263,7 @@ export async function fetchTodayAppointments(): Promise<TodayAppointment[]> {
         appointment.barber?.id ||
         appointment.id ||
         `appointment-${index}`;
-      const barberFallback = barberLookup[barberId];
+      const barberFallback = barberLookup[barberId] ?? aliasLookup[barberId];
       const time =
         toTimeString(
           appointment.time ?? appointment.startTime ?? appointment.date ?? appointment.appointmentDate

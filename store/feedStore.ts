@@ -86,7 +86,7 @@ function initFeedListener() {
   }
   isListenerInitialized = true;
 
-  const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'));
+  const q = query(collection(db, 'feed'), orderBy('createdAt', 'desc'));
 
   onSnapshot(
     q,
@@ -123,7 +123,7 @@ function initFeedListener() {
       emitChange();
     },
     (error) => {
-      console.error('Error fetching posts from Firestore:', error);
+      console.error('Error fetching feed from Firestore:', error);
     }
   );
 }
@@ -204,12 +204,17 @@ export async function addVideo(video: Partial<FeedVideo>) {
     if (mediaType === 'video') {
       docData.videoUrl = mediaUrl;
     }
-    await addDoc(collection(db, 'posts'), docData);
+    await addDoc(collection(db, 'feed'), docData);
     // We don't need to call emitChange() here,
     // onSnapshot will detect the change and trigger it.
   } catch (error) {
     console.error('Error adding video to Firestore:', error);
   }
+}
+
+export function removeVideo(id: string) {
+  feedVideos = feedVideos.filter((item) => item.id !== id);
+  emitChange();
 }
 
 // NOTE: The functions below (toggleLike, addComment, etc.) are still operating on the

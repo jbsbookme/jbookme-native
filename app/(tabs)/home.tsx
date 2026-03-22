@@ -19,8 +19,7 @@ import { SafeImage } from '../../components/SafeImage';
 import { fetchTodayAppointments } from '../../src/services/appointmentService';
 import { getAverageRating } from '../../src/services/reviewService';
 import { fetchTrendingServices, type Service } from '../../src/services/serviceService';
-import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { fetchBarbers } from '../../src/services/barberService';
 
 type Barber = {
 	id: string;
@@ -38,64 +37,6 @@ type GalleryItem = {
 	imageUrl?: string;
 };
 
-const MOCK_BARBERS: Barber[] = [
-	{
-		id: '1',
-		name: 'Adolfo',
-		image: 'https://i.pravatar.cc/300?img=1',
-		role: 'barber',
-	},
-	{
-		id: '2',
-		name: 'Luis',
-		image: 'https://i.pravatar.cc/300?img=2',
-		role: 'barber',
-	},
-	{
-		id: '3',
-		name: 'Marco',
-		image: 'https://i.pravatar.cc/300?img=3',
-		role: 'stylist',
-	},
-	{
-		id: '4',
-		name: 'Sofia',
-		image: 'https://i.pravatar.cc/300?img=4',
-		role: 'stylist',
-	},
-];
-
-const MOCK_AVAILABLE_TODAY = [
-	{
-		barberId: '1',
-		barberName: 'Adolfo',
-		barberRole: 'barber',
-		time: '10:00',
-		profileImage: MOCK_BARBERS[0]?.image,
-	},
-	{
-		barberId: '2',
-		barberName: 'Luis',
-		barberRole: 'barber',
-		time: '11:30',
-		profileImage: MOCK_BARBERS[1]?.image,
-	},
-	{
-		barberId: '4',
-		barberName: 'Sofia',
-		barberRole: 'stylist',
-		time: '1:00',
-		profileImage: MOCK_BARBERS[3]?.image,
-	},
-	{
-		barberId: '5',
-		barberName: 'Camila',
-		barberRole: 'stylist',
-		time: '2:30',
-		profileImage: 'https://i.pravatar.cc/300?img=12',
-	},
-];
-
 const MOCK_GALLERY: GalleryItem[] = [
 	{ gender: 'men', imageUrl: 'https://picsum.photos/300?random=301' },
 	{ gender: 'men', imageUrl: 'https://picsum.photos/300?random=302' },
@@ -107,21 +48,23 @@ const MOCK_GALLERY: GalleryItem[] = [
 
 async function fetchTopBarbers(): Promise<Barber[]> {
 	try {
-		const snapshot = await getDocs(collection(db, 'barbers'));
-		const barbers = snapshot.docs.map((doc) => ({
-			id: doc.id,
-			...(doc.data() as Partial<Barber> & { name?: string; image?: string }),
-		}));
-		if (barbers.length === 0) return MOCK_BARBERS;
-		return barbers.map((barber: Partial<Barber> & { name?: string }, index) => ({
-			id: barber.id ?? `${Math.random()}`,
-			name: barber.name ?? 'Barber',
-			image: barber.image || `https://i.pravatar.cc/300?img=${index + 1}`,
+		const barbers = await fetchBarbers();
+		return barbers.map((barber: any, index: number) => ({
+			id: barber.id ?? barber.userId ?? barber.uid ?? `${index}`,
+			name: barber.user?.name ?? barber.name ?? 'Barber',
+			image:
+				barber.profileImage ||
+				barber.image ||
+				barber.imageUrl ||
+				barber.photoUrl ||
+				`https://i.pravatar.cc/300?img=${index + 1}`,
 			role: barber.role,
 			gender: barber.gender,
+			userId: barber.userId,
+			uid: barber.uid,
 		}));
 	} catch (error) {
-		return MOCK_BARBERS;
+		return [];
 	}
 }
 
@@ -182,36 +125,11 @@ function resolveTopRole(value?: { role?: string; gender?: string }) {
 	return null;
 }
 
-function ensureAvailableMix(
-	items: {
-		barberId: string;
-		barberName: string;
-		barberRole?: string;
-		serviceName?: string;
-		time: string;
-		profileImage?: string;
-	}[]
-) {
-	const hasStylist = items.some((item) => normalizeRole(item.barberRole) === 'stylist');
-	const hasBarber = items.some((item) => normalizeRole(item.barberRole) === 'barber');
-	if (hasBarber && hasStylist) return items;
-	const demoStylists = MOCK_AVAILABLE_TODAY.filter(
-		(item) => normalizeRole(item.barberRole) === 'stylist'
-	);
-	const demoBarbers = MOCK_AVAILABLE_TODAY.filter(
-		(item) => normalizeRole(item.barberRole) === 'barber'
-	);
-	return [
-		...items,
-		...(hasStylist ? [] : demoStylists),
-		...(hasBarber ? [] : demoBarbers),
-	];
-}
 
 export default function Home() {
 	const router = useRouter();
 	const { width } = useWindowDimensions();
-	const [barbers, setBarbers] = useState<Barber[]>(MOCK_BARBERS);
+	const [barbers, setBarbers] = useState<Barber[]>([]);
 	const [barberRatings, setBarberRatings] = useState<Record<string, number>>({});
 	const [services, setServices] = useState<Service[]>([]);
 	const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
@@ -234,28 +152,28 @@ export default function Home() {
 	useEffect(() => {
 		const loadData = async () => {
 			setLoading(true);
-			setBarbers(MOCK_BARBERS);
+			setBarbers([]);
 			setGalleryItems(MOCK_GALLERY);
-			setAvailableToday(MOCK_AVAILABLE_TODAY);
-			setLoading(false);
+			try {
+				const barberData = await fetchTopBarbers();
+				if (Array.isArray(barberData) && barberData.length > 0) {
+					setBarbers(barberData);
+					const ratings = await Promise.all(
+						barberData.map(async (barber) => [barber.id, await getAverageRating(barber.id)])
+					);
+					setBarberRatings(Object.fromEntries(ratings));
+				} else {
+					setBarbers([]);
+				}
 
-			const barberData = await fetchTopBarbers();
-			if (Array.isArray(barberData) && barberData.length > 0) {
-				const hasStylist = barberData.some((item) => resolveTopRole(item) === 'stylist');
-				const demoStylists = MOCK_BARBERS.filter((item) => resolveTopRole(item) === 'stylist');
-				const merged = hasStylist ? barberData : [...barberData, ...demoStylists];
-				setBarbers(merged);
-				const ratings = await Promise.all(
-					merged.map(async (barber) => [barber.id, await getAverageRating(barber.id)])
-				);
-				setBarberRatings(Object.fromEntries(ratings));
+				const serviceData = await fetchTrendingServices();
+				setServices(serviceData);
+
+				const todayAppointments = await fetchTodayAppointments();
+				setAvailableToday(todayAppointments);
+			} finally {
+				setLoading(false);
 			}
-
-			const serviceData = await fetchTrendingServices();
-			setServices(serviceData);
-
-			const todayAppointments = await fetchTodayAppointments();
-			setAvailableToday(ensureAvailableMix(todayAppointments));
 		};
 
 		loadData();
@@ -277,9 +195,9 @@ export default function Home() {
 		const barberList = barbers.filter((item) => resolveTopRole(item) === 'barber');
 		const stylistList = barbers.filter((item) => resolveTopRole(item) === 'stylist');
 		const others = barbers.filter((item) => !resolveTopRole(item));
-		const selected = [...barberList.slice(0, 2), ...stylistList.slice(0, 2)];
-		if (selected.length >= 4) return selected.slice(0, 4);
-		const remaining = 4 - selected.length;
+		const selected = [...barberList.slice(0, 3), ...stylistList.slice(0, 3)];
+		if (selected.length >= 6) return selected.slice(0, 6);
+		const remaining = 6 - selected.length;
 		return [...selected, ...others.slice(0, remaining)];
 	}, [barbers]);
 	const renderStars = (rating: number) => {

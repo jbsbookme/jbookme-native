@@ -1,6 +1,18 @@
+import { useEffect } from "react";
 import { View, Text } from "react-native";
+import { cleanExpiredStories } from "../../store/storyStore";
 
 export default function Home() {
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      cleanExpiredStories();
+    }, 60_000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, []);
+
   return (
     <View
       style={{

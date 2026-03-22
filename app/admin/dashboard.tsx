@@ -28,7 +28,7 @@ type Appointment = {
 	serviceName: string;
 	date: string;
 	time: string;
-	paymentMethod: 'zelle' | 'cashapp' | 'shop';
+	paymentMethod: 'card' | 'zelle' | 'cashapp' | 'shop';
 	paymentStatus: 'pending' | 'paid';
 	status?: AppointmentStatus;
 };

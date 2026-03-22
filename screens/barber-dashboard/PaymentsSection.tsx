@@ -39,13 +39,11 @@ export const PaymentsSection = memo(function PaymentsSection({
 		<View style={styles.paymentCard}>
 			<View style={styles.paymentHeaderRow}>
 				<Text style={styles.paymentTitle}>Payments</Text>
-				{barberDocId ? (
-					<Pressable style={styles.paymentEditButton} onPress={onToggleEdit}>
-						<Text style={styles.paymentEditText}>
-							{isEditing ? 'Cancel' : 'Edit Payment Info'}
-						</Text>
-					</Pressable>
-				) : null}
+				<Pressable style={styles.paymentEditButton} onPress={onToggleEdit}>
+					<Text style={styles.paymentEditText}>
+						{isEditing ? 'Cancel' : 'Edit Payment Info'}
+					</Text>
+				</Pressable>
 			</View>
 			{isEditing ? (
 				<View style={styles.paymentForm}>

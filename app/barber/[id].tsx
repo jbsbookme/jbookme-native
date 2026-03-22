@@ -13,7 +13,7 @@ import {
   View,
 } from 'react-native';
 import { SafeImage } from '../../components/SafeImage';
-import { collection, doc, getDoc, getDocs, limit, query, updateDoc, where } from 'firebase/firestore';
+import { collection, doc, getDocs, limit, query, updateDoc, where } from 'firebase/firestore';
 import { Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
@@ -95,6 +95,7 @@ type BarberPost = {
   mediaType?: 'image' | 'video';
   videoUrl?: string;
   barberId?: string;
+  barberUserId?: string;
   barberName?: string;
   createdAt?: unknown;
 };
@@ -214,6 +215,7 @@ export default function BarberProfile() {
   const [showAllPortfolio, setShowAllPortfolio] = useState(false);
   const [barberPosts, setBarberPosts] = useState<BarberPost[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(false);
+  const [barberDocIds, setBarberDocIds] = useState<string[]>([]);
   const [socialLinks, setSocialLinks] = useState({
     instagram: '',
     facebook: '',
@@ -364,9 +366,63 @@ export default function BarberProfile() {
   }, [user, barber]);
 
   useEffect(() => {
+    const resolveBarberDocIds = async () => {
+      if (!barber && !barberId) return;
+      const candidates = [
+        { field: 'prismaBarberId', value: barberId },
+        { field: 'userId', value: barber?.userId },
+        { field: 'uid', value: barber?.uid },
+        { field: 'email', value: barber?.email },
+        { field: 'email', value: barber?.user?.email },
+      ].filter((item) => item.value);
+
+      const resolved = new Set<string>();
+      try {
+        for (const candidate of candidates) {
+          const snapshot = await getDocs(
+            query(
+              collection(db, 'barbers'),
+              where(candidate.field, '==', candidate.value),
+              limit(1)
+            )
+          );
+          if (!snapshot.empty) {
+            resolved.add(snapshot.docs[0].id);
+          }
+        }
+      } catch (error) {
+        console.log('[BarberProfile] resolve barber doc id error:', error);
+      }
+
+      const ownerUid =
+        user?.uid &&
+        (barber?.userId === user.uid || barber?.uid === user.uid || barber?.user?.id === user.uid)
+          ? user.uid
+          : null;
+
+      if (resolved.size === 0) {
+        if (barberId) resolved.add(barberId);
+        if (barber?.userId) resolved.add(barber.userId);
+        if (barber?.uid) resolved.add(barber.uid);
+      }
+
+      if (ownerUid) {
+        resolved.add(ownerUid);
+      }
+
+      setBarberDocIds(Array.from(resolved));
+    };
+
+    void resolveBarberDocIds();
+  }, [barber, barberId, user?.uid]);
+
+  useEffect(() => {
     const loadPortfolioImages = async () => {
-      if (!barber || !barberId) return;
-      const galleryItems = (await fetchBarberGalleryImages(barberId)) as GalleryItem[];
+      if (barberDocIds.length === 0) {
+        setPortfolioImages([]);
+        return;
+      }
+      const galleryItems = (await fetchBarberGalleryImages(barberDocIds)) as GalleryItem[];
       const fromGallery = galleryItems
         .map((item) => item.imageUrl ?? item.cloud_storage_path)
         .filter((url): url is string => Boolean(url));
@@ -374,12 +430,48 @@ export default function BarberProfile() {
     };
 
     void loadPortfolioImages();
-  }, [barber, barberId]);
+  }, [barberDocIds]);
 
   useEffect(() => {
-    setBarberPosts([]);
-    setLoadingPosts(false);
-  }, [barber]);
+    const loadBarberPosts = async () => {
+      if (!barber) return;
+      const ids = [
+        ...barberDocIds,
+        barber.userId,
+        barber.uid,
+        barber.user?.id,
+        barber.user?.uid,
+      ].filter((value): value is string => Boolean(value));
+      if (ids.length === 0) {
+        setBarberPosts([]);
+        setLoadingPosts(false);
+        return;
+      }
+      setLoadingPosts(true);
+      try {
+        const uniqueIds = Array.from(new Set(ids));
+        const queries = uniqueIds.flatMap((id) => [
+          query(collection(db, 'feed'), where('barberId', '==', id)),
+          query(collection(db, 'feed'), where('barberUserId', '==', id)),
+        ]);
+        const snapshots = await Promise.all(queries.map((q) => getDocs(q)));
+        const merged = new Map<string, BarberPost>();
+        snapshots.forEach((snapshot) => {
+          snapshot.docs.forEach((docSnap) => {
+            merged.set(docSnap.id, { id: docSnap.id, ...(docSnap.data() as BarberPost) });
+          });
+        });
+        setBarberPosts(Array.from(merged.values()));
+      } catch (error) {
+        console.log('[BarberProfile] load posts error:', error);
+        setBarberPosts([]);
+      } finally {
+        setLoadingPosts(false);
+      }
+    };
+
+    void loadBarberPosts();
+  }, [barber, barberDocIds]);
 
   const groupedAppointments = useMemo(() => {
     if (appointments.length === 0) return [] as Array<{
@@ -422,6 +514,16 @@ export default function BarberProfile() {
     return sorted;
   }, [appointments]);
 
+  const mergedPortfolioImages = useMemo(() => {
+    const combined = [...portfolioImages];
+    const seen = new Set<string>();
+    return combined.filter((url) => {
+      if (seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    });
+  }, [portfolioImages]);
+
 	if (loading) {
     return <SafeAreaView style={styles.screen}><Text style={styles.name}>Loading profile...</Text></SafeAreaView>
   }
@@ -444,8 +546,8 @@ export default function BarberProfile() {
   console.log('BARBER PROFILE IMAGE URL:', barber?.imageUrl);
   const barberImage = getBarberImage(avatarUri);
   const visiblePortfolioImages = showAllPortfolio
-    ? portfolioImages
-    : portfolioImages.slice(0, 6);
+    ? mergedPortfolioImages
+    : mergedPortfolioImages.slice(0, 6);
 	const reviews = getReviewsForBarber(barber.id);
   const averageRating = Number.isFinite(barber.rating)
     ? barber.rating
@@ -459,7 +561,7 @@ export default function BarberProfile() {
     return item.createdAt >= Date.now() - 7 * 24 * 60 * 60 * 1000;
   }).length;
   const reviewCount = typeof barber.reviewCount === 'number' ? barber.reviewCount : reviews.length;
-  const portfolio = barberPosts;
+  const portfolio = barberPosts.filter((item) => item.mediaType === 'video' || item.videoUrl);
 
   const rankInShop = (() => {
     const uniqueBarbers = new Map<string, string>();

@@ -65,7 +65,7 @@ export default function AdminDashboard() {
   const [newBarberName, setNewBarberName] = useState('');
   const [newBarberAccountEmail, setNewBarberAccountEmail] = useState('');
   const [newBarberAccountPassword, setNewBarberAccountPassword] = useState('');
-  const [newBarberRole, setNewBarberRole] = useState<'barber' | 'stylist'>('barber');
+  const [role, setRole] = useState<'BARBER' | 'STYLIST'>('BARBER');
   const [newBarberEmail, setNewBarberEmail] = useState('');
   const [newBarberPhone, setNewBarberPhone] = useState('');
   const [newBarberWhatsApp, setNewBarberWhatsApp] = useState('');
@@ -282,7 +282,7 @@ export default function AdminDashboard() {
     try {
       const barberData = {
         name: trimmedName,
-        role: newBarberRole.toUpperCase(), // 'barber' -> 'BARBER'
+        role,
         email: newBarberEmail.trim(),
         phone: newBarberPhone.trim(),
         specialty: newBarberSpecialties.trim(),
@@ -454,22 +454,6 @@ export default function AdminDashboard() {
       />
       <View style={styles.inlineRow}>
         <Pressable
-          style={[styles.chip, newBarberRole === 'barber' && styles.chipActive]}
-          onPress={() => setNewBarberRole('barber')}
-        >
-          <Text style={[styles.chipText, newBarberRole === 'barber' && styles.chipTextActive]}>
-            Barber
-          </Text>
-        </Pressable>
-        <Pressable
-          style={[styles.chip, newBarberRole === 'stylist' && styles.chipActive]}
-          onPress={() => setNewBarberRole('stylist')}
-        >
-          <Text style={[styles.chipText, newBarberRole === 'stylist' && styles.chipTextActive]}>
-            Stylist
-          </Text>
-        </Pressable>
-        <Pressable
           style={[styles.chip, barberActive && styles.chipActive]}
           onPress={() => setBarberActive((current) => !current)}
         >
@@ -477,6 +461,35 @@ export default function AdminDashboard() {
             {barberActive ? 'Active' : 'Inactive'}
           </Text>
         </Pressable>
+      </View>
+      <View style={{ marginTop: 10 }}>
+        <Text style={{ color: '#aaa', marginBottom: 6 }}>Role</Text>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <Pressable
+            onPress={() => setRole('BARBER')}
+            style={{
+              flex: 1,
+              padding: 10,
+              borderRadius: 10,
+              backgroundColor: role === 'BARBER' ? '#00f0ff' : '#111',
+              alignItems: 'center',
+            }}
+          >
+            <Text style={{ color: role === 'BARBER' ? '#000' : '#fff' }}>Barber</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setRole('STYLIST')}
+            style={{
+              flex: 1,
+              padding: 10,
+              borderRadius: 10,
+              backgroundColor: role === 'STYLIST' ? '#ff00aa' : '#111',
+              alignItems: 'center',
+            }}
+          >
+            <Text style={{ color: '#fff' }}>Stylist</Text>
+          </Pressable>
+        </View>
       </View>
       <TextInput
         placeholder="Barber personal email"

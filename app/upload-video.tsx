@@ -13,9 +13,12 @@ import { SafeImage } from '../components/SafeImage';
 import * as ImagePicker from 'expo-image-picker';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { uploadMediaToCloudinary } from '../lib/cloudinaryUpload';
-import { addVideo, getFeedVideos, subscribeFeed } from '../store/feedStore';
+import { addVideo, getFeedVideos, removeVideo, subscribeFeed } from '../store/feedStore';
+import { addStory } from '../store/storyStore';
 import { useAuth } from '../contexts/AuthContext';
 import { fetchBarbers } from '../src/services/barberService';
+import { deleteDoc, doc } from 'firebase/firestore';
+import { auth, db } from '../src/config/firebase';
 
 type UserRole = 'BARBER' | 'STYLIST' | 'CLIENT';
 
@@ -37,7 +40,8 @@ type BarberRecord = {
 
 
 const CURRENT_ROLE: UserRole = 'BARBER';
-const MAX_DURATION_SECONDS = 32;
+const MAX_DURATION_SECONDS = 45;
+const DELETE_MEDIA_URL = process.env.EXPO_PUBLIC_DELETE_MEDIA_URL;
 
 function VideoPreview({ uri }: { uri: string }) {
   const player = useVideoPlayer(uri, (p) => {
@@ -90,7 +94,9 @@ export default function UploadVideo() {
   const [serviceType, setServiceType] = useState('');
   const [isPosting, setIsPosting] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [isPostedOpen, setIsPostedOpen] = useState(false);
   const postedVideos = useSyncExternalStore(subscribeFeed, getFeedVideos, getFeedVideos);
+  const visiblePostedVideos = isPostedOpen ? postedVideos : postedVideos.slice(0, 2);
 
   const canUpload = useMemo(
     () => CURRENT_ROLE === 'BARBER' || CURRENT_ROLE === 'STYLIST',
@@ -229,6 +235,17 @@ export default function UploadVideo() {
         shop: "JB's Barbershop",
         address: '98 Union St, Lynn MA',
       });
+      const now = new Date();
+      const expires = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+      addStory({
+        id: Date.now().toString(),
+        mediaUrl,
+        mediaType: selectedMedia.mediaType,
+        barberId,
+        barberName,
+        createdAt: now.toISOString(),
+        expiresAt: expires.toISOString(),
+      });
       setSelectedMedia(null);
       setCaption('');
       setServiceType('');
@@ -238,6 +255,46 @@ export default function UploadVideo() {
     } finally {
       setIsPosting(false);
       setProgress(0);
+    }
+  };
+
+  const handleClearSelection = () => {
+    if (isPosting) return;
+    setSelectedMedia(null);
+    setCaption('');
+    setServiceType('');
+    setProgress(0);
+  };
+
+  const handleDeleteMedia = async (video: { id: string; mediaUrl?: string }) => {
+    try {
+      await deleteDoc(doc(db, 'feed', video.id));
+      await deleteDoc(doc(db, 'media', video.id));
+
+      if (DELETE_MEDIA_URL && video.mediaUrl) {
+        const token = await auth.currentUser?.getIdToken();
+        if (!token) {
+          throw new Error('User not authenticated');
+        }
+
+        const response = await fetch(DELETE_MEDIA_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ url: video.mediaUrl }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Cloudinary delete failed');
+        }
+      }
+
+      removeVideo(video.id);
+    } catch (error) {
+      console.log('[UploadVideo] delete error:', error);
+      Alert.alert('Delete failed', 'Unable to delete this media.');
     }
   };
 
@@ -290,28 +347,91 @@ export default function UploadVideo() {
                 </View>
               </View>
             ) : null}
-            <Pressable style={styles.postButton} onPress={handlePost} disabled={isPosting}>
-              <Text style={styles.postText}>
-                {isPosting
-                  ? 'Posting...'
-                  : selectedMedia.mediaType === 'video'
-                    ? 'Post Video'
-                    : 'Post Photo'}
-              </Text>
-            </Pressable>
+            <View style={styles.actionRow}>
+              <Pressable style={styles.deleteButton} onPress={handleClearSelection} disabled={isPosting}>
+                <Text style={styles.deleteText}>Remove</Text>
+              </Pressable>
+              <Pressable style={styles.postButton} onPress={handlePost} disabled={isPosting}>
+                <Text style={styles.postText}>
+                  {isPosting
+                    ? 'Posting...'
+                    : selectedMedia.mediaType === 'video'
+                      ? 'Post Video'
+                      : 'Post Photo'}
+                </Text>
+              </Pressable>
+            </View>
           </View>
         ) : null}
 
         {postedVideos.length > 0 ? (
           <View style={styles.listSection}>
-            <Text style={styles.sectionTitle}>Posted Media (local)</Text>
-            {postedVideos.map((video) => (
-              <View key={video.id} style={styles.postedItem}>
-                <Text style={styles.postedTitle}>{video.caption || video.title || 'Untitled video'}</Text>
-                <Text style={styles.postedMeta}>Service: {video.serviceType || 'N/A'}</Text>
-                <Text style={styles.postedMeta}>Barber: {video.barber ?? 'Unknown'} ⭐ {(video.rating ?? 0).toFixed(1)}</Text>
+            <Pressable
+              style={styles.sectionHeader}
+              onPress={() => setIsPostedOpen((prev) => !prev)}
+            >
+              <Text style={styles.sectionTitle}>Posted Media (local)</Text>
+              <Text style={styles.sectionToggleText}>
+                {isPostedOpen ? 'Hide' : 'Show'} ({postedVideos.length})
+              </Text>
+            </Pressable>
+            {visiblePostedVideos.map((video) => (
+              <View key={video.id} style={{ marginBottom: 12 }}>
+                <View style={{ position: 'relative' }}>
+                  {video.mediaType === 'video' ? (
+                    <VideoPreview uri={video.mediaUrl || ''} />
+                  ) : (
+                    <ImagePreview uri={video.mediaUrl || ''} />
+                  )}
+
+                  <Pressable
+                    onPress={() => {
+                      Alert.alert('Delete', 'Remove this media?', [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Delete',
+                          style: 'destructive',
+                          onPress: () => {
+                            void handleDeleteMedia({
+                              id: video.id,
+                              mediaUrl: video.mediaUrl,
+                            });
+                          },
+                        },
+                      ]);
+                    }}
+                    style={{
+                      position: 'absolute',
+                      top: 10,
+                      right: 10,
+                      backgroundColor: 'rgba(0,0,0,0.7)',
+                      padding: 6,
+                      borderRadius: 20,
+                      zIndex: 10,
+                    }}
+                  >
+                    <Text style={{ color: 'white', fontSize: 12 }}>Delete</Text>
+                  </Pressable>
+                </View>
+
+                <View style={styles.postedItem}>
+                  <Text style={styles.postedTitle}>
+                    {video.caption || video.title || 'Untitled'}
+                  </Text>
+                  <Text style={styles.postedMeta}>
+                    Service: {video.serviceType || 'N/A'}
+                  </Text>
+                  <Text style={styles.postedMeta}>
+                    Barber: {video.barber ?? 'Unknown'} ⭐ {(video.rating ?? 0).toFixed(1)}
+                  </Text>
+                </View>
               </View>
             ))}
+            {!isPostedOpen && postedVideos.length > 2 ? (
+              <Text style={styles.moreHint}>
+                Showing latest 2. Tap to view all.
+              </Text>
+            ) : null}
           </View>
         ) : null}
       </ScrollView>
@@ -348,12 +468,13 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: 'rgba(225, 6, 0, 0.85)',
-    paddingVertical: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 14,
     alignItems: 'center',
   },
   actionText: {
     color: '#00f0ff',
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '600',
   },
   previewCard: {
@@ -390,9 +511,29 @@ backgroundColor: '#000',
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
+    flex: 1,
   },
   postText: {
     color: '#000000',
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  deleteButton: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    paddingVertical: 12,
+    alignItems: 'center',
+    flex: 1,
+  },
+  deleteText: {
+    color: '#ffffff',
     fontSize: 14,
     fontWeight: '700',
     letterSpacing: 0.6,
@@ -428,10 +569,30 @@ backgroundColor: '#000',
   listSection: {
     gap: 10,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
   sectionTitle: {
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  sectionToggleText: {
+    color: '#9aa0a6',
+    fontSize: 13,
+    fontWeight: '600',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 12,
+  },
+  moreHint: {
+    color: '#9aa0a6',
+    fontSize: 12,
   },
   postedItem: {
 backgroundColor: '#000',

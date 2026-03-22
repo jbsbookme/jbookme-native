@@ -51,7 +51,6 @@ export default function SelectTime() {
   const [service, setService] = useState<Service | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
-  const [acceptTerms, setAcceptTerms] = useState(false);
   const [availableSlots, setAvailableSlots] = useState<string[]>(ALL_TIME_SLOTS);
   const [bookedSlots, setBookedSlots] = useState<Set<string>>(new Set());
   const [loadingSlots, setLoadingSlots] = useState(false);
@@ -130,7 +129,7 @@ export default function SelectTime() {
     }
   }, [selectedTime, visibleSlots]);
 
-  const canContinue = Boolean(acceptTerms && selectedDate && selectedTime);
+  const canContinue = Boolean(selectedDate && selectedTime);
 
   const handleContinue = () => {
     if (!canContinue || !bookingDateTime) return;
@@ -235,11 +234,6 @@ export default function SelectTime() {
           ) : null}
         </View>
 
-        <Pressable style={styles.checkboxRow} onPress={() => setAcceptTerms((current) => !current)}>
-          <View style={[styles.checkbox, acceptTerms && styles.checkboxChecked]} />
-          <Text style={styles.checkboxText}>Accept terms</Text>
-        </Pressable>
-
         <Pressable
           style={[styles.button, !canContinue && styles.buttonDisabled]}
           onPress={handleContinue}
@@ -304,7 +298,7 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 180,
     borderRadius: 12,
-backgroundColor: '#000',
+    backgroundColor: '#000',
   },
   timeGrid: {
     flexDirection: 'row',
@@ -317,7 +311,7 @@ backgroundColor: '#000',
     borderRadius: 10,
     borderWidth: 1,
     borderColor: 'rgba(225, 6, 0, 0.85)',
-backgroundColor: '#000',
+    backgroundColor: '#000',
   },
   timeButtonDisabled: {
     backgroundColor: 'rgba(255,255,255,0.06)',
@@ -342,30 +336,11 @@ backgroundColor: '#000',
     color: '#9aa0a6',
     fontSize: 13,
   },
-  checkboxRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  checkbox: {
-    width: 18,
-    height: 18,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(225, 6, 0, 0.85)',
-  },
-  checkboxChecked: {
-    backgroundColor: '#00f0ff',
-  },
-  checkboxText: {
-    color: '#ffffff',
-    fontSize: 14,
-  },
   button: {
-    marginTop: 8,
+    marginTop: 12,
     backgroundColor: '#00f0ff',
     paddingVertical: 14,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: 'center',
   },
   buttonDisabled: {
@@ -373,9 +348,9 @@ backgroundColor: '#000',
   },
   buttonText: {
     color: '#000000',
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
-    textTransform: 'uppercase',
     letterSpacing: 0.6,
+    textTransform: 'uppercase',
   },
 });

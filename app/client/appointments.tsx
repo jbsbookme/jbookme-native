@@ -10,11 +10,11 @@ import {
 	Text,
 	View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRoleStore } from '@/src/store/roleStore';
 
-const API_BASE_URL = 'https://jbsbookme.com/api';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'https://jbsbookme.com/api';
 
 type AppointmentStatus = 'scheduled' | 'completed' | 'cancelled';
 
@@ -24,7 +24,7 @@ type Appointment = {
 	serviceName: string;
 	date: string;
 	time: string;
-	paymentMethod: 'zelle' | 'cashapp' | 'shop';
+	paymentMethod: 'card' | 'zelle' | 'cashapp' | 'shop';
 	paymentStatus: 'pending' | 'paid';
 	status?: AppointmentStatus;
 };
@@ -63,19 +63,27 @@ function normalizeDate(value: string) {
 
 function paymentLabel(method: Appointment['paymentMethod'], status: Appointment['paymentStatus']) {
 	const methodLabel =
-		method === 'zelle' ? 'Zelle' : method === 'cashapp' ? 'Cash App' : 'Pay at Shop';
+		method === 'card'
+			? 'Card'
+			: method === 'zelle'
+				? 'Zelle'
+				: method === 'cashapp'
+					? 'Cash App'
+					: 'Pay at Shop';
 	const statusLabel = status === 'paid' ? 'Paid' : 'Pending';
 	return `${methodLabel} (${statusLabel})`;
 }
 
 async function fetchAppointments(userId: string) {
-	const response = await fetch(
-		`${API_BASE_URL}/appointments?userId=${encodeURIComponent(userId)}`
-	);
+	const url = `${API_BASE_URL}/appointments?userId=${encodeURIComponent(userId)}`;
+	console.log('[MyAppointments] fetch start:', url);
+	const response = await fetch(url);
+	console.log('[MyAppointments] fetch status:', response.status);
 	if (!response.ok) {
-		throw new Error('Unable to load appointments.');
+		throw new Error(`Unable to load appointments (${response.status}).`);
 	}
 	const data = (await response.json()) as { appointments?: Appointment[] };
+	console.log('[MyAppointments] fetch data:', data);
 	return data.appointments ?? [];
 }
 
@@ -93,6 +101,7 @@ async function cancelAppointment(appointmentId: string) {
 export default function ClientAppointments() {
 	const { user } = useAuth();
 	const router = useRouter();
+	const params = useLocalSearchParams<{ filter?: string }>();
 	const role = useRoleStore((state) => state.role);
 	const normalizedRole = role?.toLowerCase() ?? null;
 	const isAdmin = normalizedRole === 'admin';
@@ -101,7 +110,10 @@ export default function ClientAppointments() {
 	const [appointments, setAppointments] = useState<Appointment[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [refreshing, setRefreshing] = useState(false);
-	const [filter, setFilter] = useState<'upcoming' | 'past' | 'cancelled' | 'all'>('upcoming');
+	const [filter, setFilter] = useState<'upcoming' | 'past'>(
+		params.filter === 'past' ? 'past' : 'upcoming'
+	);
+	const isHistory = filter === 'past';
 
 	useEffect(() => {
 		if (!showClientAppointments) {
@@ -115,6 +127,7 @@ export default function ClientAppointments() {
 			const data = await fetchAppointments(user.uid);
 			setAppointments(data);
 		} catch (error) {
+			console.log('[MyAppointments] load error:', error);
 			Alert.alert('Load failed', 'Unable to load appointments.');
 		}
 	};
@@ -163,7 +176,12 @@ export default function ClientAppointments() {
 			}
 		});
 
-		const buildSection = (key: SectionItem['key'], title: string, list: Appointment[], emptyText: string) => ({
+		const buildSection = (
+			key: SectionItem['key'],
+			title: string,
+			list: Appointment[],
+			emptyText: string
+		) => ({
 			key,
 			title,
 			appointments: list.sort((a, b) => a.time.localeCompare(b.time)),
@@ -176,9 +194,12 @@ export default function ClientAppointments() {
 			buildSection('cancelled', 'Cancelled', cancelled, 'No cancelled appointments.'),
 		];
 
-		if (filter === 'all') return allSections;
-		return allSections.filter((section) => section.key === filter);
-	}, [appointments, filter]);
+		return isHistory
+			? allSections.filter(
+					(section) => section.key === 'past' || section.key === 'cancelled'
+				)
+			: allSections.filter((section) => section.key === 'upcoming');
+	}, [appointments, isHistory]);
 
 	const handleCancel = async (appointmentId: string) => {
 		try {
@@ -226,7 +247,13 @@ export default function ClientAppointments() {
 							<Text style={styles.emptyText}>{item.emptyText}</Text>
 						) : (
 							item.appointments.map((appointment) => (
-								<View key={appointment.id} style={[styles.card, { backgroundColor: '#000', borderWidth: 1, borderColor: 'rgba(225, 6, 0, 0.85)' }]}>
+								<View
+									key={appointment.id}
+									style={[
+										styles.card,
+										{ backgroundColor: '#000', borderWidth: 1, borderColor: 'rgba(225, 6, 0, 0.85)' },
+									]}
+								>
 									<Text style={styles.barberName}>{appointment.barberName}</Text>
 									<Text style={styles.serviceName}>{appointment.serviceName}</Text>
 									<View style={styles.timeRow}>
@@ -252,33 +279,6 @@ export default function ClientAppointments() {
 				ListHeaderComponent={
 					<View style={styles.header}>
 						<Text style={styles.title}>My Appointments</Text>
-						<View style={styles.filters}>
-							{(['upcoming', 'past', 'cancelled', 'all'] as const).map((key) => (
-								<Pressable
-									key={key}
-									style={[
-										styles.filterButton,
-										filter === key && styles.filterButtonActive,
-									]}
-									onPress={() => setFilter(key)}
-								>
-									<Text
-										style={[
-											styles.filterText,
-											filter === key && styles.filterTextActive,
-										]}
-									>
-										{key === 'upcoming'
-											? 'Upcoming'
-											: key === 'past'
-											? 'Past'
-											: key === 'cancelled'
-											? 'Cancelled'
-											: 'All'}
-									</Text>
-								</Pressable>
-							))}
-						</View>
 					</View>
 				}
 				refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -300,35 +300,33 @@ const styles = StyleSheet.create({
 		paddingBottom: 8,
 		gap: 12,
 	},
+	headerRow: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		justifyContent: 'space-between',
+		gap: 12,
+	},
 	title: {
 		color: '#ffffff',
 		fontSize: 22,
 		fontWeight: '700',
 	},
-	filters: {
-		flexDirection: 'row',
-		flexWrap: 'wrap',
-		gap: 10,
-	},
-	filterButton: {
+	historyToggle: {
 		paddingVertical: 8,
-		paddingHorizontal: 14,
+		paddingHorizontal: 12,
 		borderRadius: 999,
 		borderWidth: 1,
 		borderColor: 'rgba(225, 6, 0, 0.85)',
-backgroundColor: '#000',
+		backgroundColor: '#000',
 	},
-	filterButtonActive: {
+	historyToggleActive: {
 		borderColor: 'rgba(225, 6, 0, 0.85)',
 		backgroundColor: 'rgba(0,240,255,0.15)',
 	},
-	filterText: {
+	historyToggleText: {
 		color: '#9aa0a6',
 		fontSize: 12,
 		fontWeight: '600',
-	},
-	filterTextActive: {
-		color: '#00f0ff',
 	},
 	listContent: {
 		paddingBottom: 32,

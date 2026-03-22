@@ -21,19 +21,30 @@ export async function fetchShopGalleryImages(): Promise<GalleryItem[]> {
 	}
 }
 
-export async function fetchBarberGalleryImages(barberId: string): Promise<GalleryItem[]> {
+export async function fetchBarberGalleryImages(barberId: string | string[]): Promise<GalleryItem[]> {
 	try {
-		const { collection, getDocs, orderBy, query, where } = await import('firebase/firestore');
+		const { collection, getDocs } = await import('firebase/firestore');
 		const { db } = await import('../config/firebase');
-		const galleryQuery = query(
-			collection(db, 'barberGallery'),
-			where('barberId', '==', barberId),
-			orderBy('createdAt', 'desc')
+		const ids = Array.isArray(barberId) ? barberId : [barberId];
+		const snapshots = await Promise.all(
+			ids
+				.filter((id) => id)
+				.map((id) => getDocs(collection(db, 'barbers', id, 'portfolio')))
 		);
-		const snapshot = await getDocs(galleryQuery);
-		return snapshot.docs.map((docItem) => ({
-			...(docItem.data() as GalleryItem),
-		}));
+		const items = snapshots.flatMap((snapshot) =>
+			snapshot.docs.map((docItem) => ({
+				id: docItem.id,
+				...(docItem.data() as GalleryItem),
+			}))
+		);
+		const seen = new Set<string>();
+		return items.filter((item) => {
+			const key = item.imageUrl ?? item.cloud_storage_path ?? item.id ?? '';
+			if (!key) return true;
+			if (seen.has(key)) return false;
+			seen.add(key);
+			return true;
+		});
 	} catch (error) {
 		console.error('[GalleryService] fetchBarberGalleryImages error:', error);
 		return [];

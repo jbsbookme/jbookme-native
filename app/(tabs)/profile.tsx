@@ -283,6 +283,20 @@ export default function Profile() {
 		return date ? date.getTime() : 0;
 	};
 
+	const upcomingAppointments = useMemo(() => {
+		return appointments
+			.filter((appointment) => {
+				const status = appointment.status ?? '';
+				if (status === 'cancelled' || status === 'completed' || status === 'no-show') {
+					return false;
+				}
+				const date = formatAppointmentTime(appointment.time ?? appointment.date);
+				return date ? date.getTime() > Date.now() : false;
+			})
+			.sort((left, right) => getAppointmentTimestamp(left) - getAppointmentTimestamp(right))
+			.slice(0, 2);
+	}, [appointments]);
+
 	const handleShare = async () => {
 		await Share.share({
 			message: `Use my JBookMe code ${referralCode} to get $5 deposit credit!`,
@@ -445,9 +459,72 @@ export default function Profile() {
 				</View>
 
 				{showClientAppointments ? (
-					<Pressable style={styles.primaryAction} onPress={() => router.push('/client/appointments')}>
-						<Text style={styles.primaryActionText}>My Appointments</Text>
-					</Pressable>
+					<View style={styles.section}>
+						<View style={styles.sectionHeaderRow}>
+							<Text style={styles.sectionTitle}>Upcoming Appointments</Text>
+							<Pressable
+								style={styles.historyToggle}
+								onPress={() =>
+									router.push({
+										pathname: '/client/appointments',
+										params: { filter: 'past' },
+									})
+								}
+							>
+								<Text style={styles.historyToggleText}>View History</Text>
+							</Pressable>
+						</View>
+						{upcomingAppointments.length === 0 ? (
+							<View style={styles.appointmentCard}>
+								<Text style={styles.appointmentLabel}>No upcoming appointments.</Text>
+							</View>
+						) : (
+							upcomingAppointments.map((appointment) => {
+								const service = appointment.serviceId ? servicesById[appointment.serviceId] : undefined;
+								const barber = appointment.barberId ? barbersById[appointment.barberId] : undefined;
+								return (
+									<View key={`preview-${appointment.id}`} style={styles.appointmentCard}>
+										<Text style={styles.appointmentHeadline}>
+											{barber?.user?.name ?? 'Barber'}
+										</Text>
+										<Text style={styles.appointmentLabel}>
+											Service:{' '}
+											<Text style={styles.appointmentValue}>
+												{formatServiceLabel(service, appointment.serviceId)}
+											</Text>
+										</Text>
+										<Text style={styles.appointmentLabel}>
+											Time:{' '}
+											<Text style={styles.appointmentValue}>
+												{formatAppointmentDate(appointment.time ?? appointment.date)}
+											</Text>
+										</Text>
+										<View style={styles.appointmentActions}>
+											<Pressable
+												style={styles.messageButton}
+												onPress={() => handleMessageBarber(appointment.id)}
+												disabled={!appointment.barberId}
+											>
+												<Text style={styles.messageText}>Chat</Text>
+											</Pressable>
+											<Pressable
+												style={styles.rescheduleButton}
+												onPress={() => handleReschedule(appointment)}
+											>
+												<Text style={styles.rescheduleText}>Reschedule</Text>
+											</Pressable>
+											<Pressable
+												style={styles.cancelButton}
+												onPress={() => handleCancel(appointment)}
+											>
+												<Text style={styles.cancelText}>Cancel</Text>
+											</Pressable>
+										</View>
+									</View>
+								);
+							})
+						)}
+					</View>
 				) : null}
 
 				{isAdmin ? (
@@ -488,93 +565,6 @@ export default function Profile() {
 						))
 					)}
 				</View>
-
-				{showClientAppointments ? (
-					<View style={styles.section}>
-						<View style={styles.appointmentsHeader}>
-							<Text style={styles.sectionTitle}>My Appointments</Text>
-							<Pressable
-								style={[styles.historyToggle, showHistory && styles.historyToggleActive]}
-								onPress={() => setShowHistory((current) => !current)}
-							>
-								<Text style={styles.historyToggleText}>
-									{showHistory ? 'Show Upcoming' : 'View History'}
-								</Text>
-							</Pressable>
-						</View>
-						{appointments.map((item) => (
-							<View key={`raw-${item.id}`} style={{ marginBottom: 10 }}>
-								<Text style={{ color: 'white' }}>
-									{formatAppointmentDate(item.date ?? item.time)}
-								</Text>
-								<Text style={{ color: 'gray' }}>Service: {item.serviceId ?? 'N/A'}</Text>
-							</View>
-						))}
-						{appointments.length === 0 ? (
-							<View style={styles.appointmentCard}>
-								<Text style={styles.appointmentLabel}>No appointments yet.</Text>
-							</View>
-						) : (
-							appointments
-								.filter((appointment) => {
-									const date = formatAppointmentTime(appointment.time ?? appointment.date);
-									if (!date) return showHistory;
-									return showHistory ? date.getTime() <= Date.now() : date.getTime() > Date.now();
-								})
-								.sort((left, right) =>
-									showHistory
-										? getAppointmentTimestamp(right) - getAppointmentTimestamp(left)
-										: getAppointmentTimestamp(left) - getAppointmentTimestamp(right)
-								)
-								.map((appointment) => {
-								const service = appointment.serviceId ? servicesById[appointment.serviceId] : undefined;
-								const barber = appointment.barberId ? barbersById[appointment.barberId] : undefined;
-								return (
-									<View key={appointment.id} style={styles.appointmentCard}>
-										<Text style={styles.appointmentHeadline}>
-											{barber?.user?.name ?? 'Barber'}
-										</Text>
-										<Text style={styles.appointmentLabel}>
-											Service:{' '}
-											<Text style={styles.appointmentValue}>
-												{formatServiceLabel(service, appointment.serviceId)}
-											</Text>
-										</Text>
-										<Text style={styles.appointmentLabel}>
-											Time:{' '}
-											<Text style={styles.appointmentValue}>
-												{formatAppointmentDate(appointment.time ?? appointment.date)}
-											</Text>
-										</Text>
-										<View style={styles.appointmentActions}>
-											<Pressable
-												style={styles.messageButton}
-												onPress={() => handleMessageBarber(appointment.id)}
-												disabled={!appointment.barberId || showHistory}
-											>
-												<Text style={styles.messageText}>Message Barber</Text>
-											</Pressable>
-											<Pressable
-												style={styles.rescheduleButton}
-												onPress={() => handleReschedule(appointment)}
-												disabled={showHistory}
-											>
-												<Text style={styles.rescheduleText}>Reschedule</Text>
-											</Pressable>
-											<Pressable
-												style={styles.cancelButton}
-												onPress={() => handleCancel(appointment)}
-												disabled={showHistory}
-											>
-												<Text style={styles.cancelText}>Cancel</Text>
-											</Pressable>
-										</View>
-									</View>
-								);
-							})
-						)}
-					</View>
-				) : null}
 
 				<View style={styles.section}>
 					<Text style={styles.sectionTitle}>Account</Text>
@@ -629,29 +619,29 @@ export default function Profile() {
 							<View style={styles.supportIconWrap}>
 								<Ionicons name="map" size={18} color="#00f0ff" />
 							</View>
-							<Text style={styles.supportTitle}>Get Directions</Text>
-							<Text style={styles.supportSubtitle}>Open Maps</Text>
+							<Text style={styles.supportTitle} numberOfLines={1}>Get Directions</Text>
+							<Text style={styles.supportSubtitle} numberOfLines={1}>Open Maps</Text>
 						</Pressable>
 						<Pressable style={styles.supportCard} onPress={makeCall}>
 							<View style={styles.supportIconWrap}>
 								<Ionicons name="call" size={18} color="#00f0ff" />
 							</View>
-							<Text style={styles.supportTitle}>Call Shop</Text>
-							<Text style={styles.supportSubtitle}>Tap to call</Text>
+							<Text style={styles.supportTitle} numberOfLines={1}>Call Shop</Text>
+							<Text style={styles.supportSubtitle} numberOfLines={1}>Tap to call</Text>
 						</Pressable>
 						<Pressable style={styles.supportCard} onPress={openWhatsAppShop}>
 							<View style={styles.supportIconWrap}>
 								<Ionicons name="logo-whatsapp" size={18} color="#00f0ff" />
 							</View>
-							<Text style={styles.supportTitle}>WhatsApp</Text>
-							<Text style={styles.supportSubtitle}>Send a message</Text>
+							<Text style={styles.supportTitle} numberOfLines={1}>WhatsApp</Text>
+							<Text style={styles.supportSubtitle} numberOfLines={1}>Send a message</Text>
 						</Pressable>
 						<Pressable style={styles.supportCard} onPress={() => router.push('/about')}>
 							<View style={styles.supportIconWrap}>
 								<Ionicons name="information-circle" size={18} color="#00f0ff" />
 							</View>
-							<Text style={styles.supportTitle}>About Us</Text>
-							<Text style={styles.supportSubtitle}>Learn more</Text>
+							<Text style={styles.supportTitle} numberOfLines={1}>About Us</Text>
+							<Text style={styles.supportSubtitle} numberOfLines={1}>Learn more</Text>
 						</Pressable>
 					</View>
 				</View>
@@ -1042,15 +1032,19 @@ backgroundColor: '#000',
 		flexDirection: 'row',
 		flexWrap: 'wrap',
 		gap: 12,
+		alignItems: 'stretch',
 	},
 	supportCard: {
 		flexBasis: '48%',
 		backgroundColor: '#000',
 		borderRadius: 14,
 		padding: 14,
+		height: 120,
 		borderWidth: 1,
 		borderColor: 'rgba(225, 6, 0, 0.85)',
 		gap: 6,
+		justifyContent: 'center',
+		alignItems: 'center',
 	},
 	supportIconWrap: {
 		width: 34,
@@ -1065,10 +1059,14 @@ backgroundColor: '#000',
 		color: '#ffffff',
 		fontSize: 13,
 		fontWeight: '700',
+		textAlign: 'center',
+		width: '100%',
 	},
 	supportSubtitle: {
 		color: '#9aa0a6',
 		fontSize: 11,
+		textAlign: 'center',
+		width: '100%',
 	},
 	logoutButton: {
 		marginTop: 4,

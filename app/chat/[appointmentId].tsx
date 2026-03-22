@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, SafeAreaView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, SafeAreaView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { addDoc, collection, doc, getDoc, onSnapshot, orderBy, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
 import { db } from '@/src/config/firebase';
 import { useAuth } from '@/contexts/AuthContext';
+import { fetchBarbers } from '@/src/services/barberService';
 
 type AppointmentDoc = {
 	barberId?: string;
@@ -35,6 +36,7 @@ export default function AppointmentChat() {
 	const [messages, setMessages] = useState<ChatMessage[]>([]);
 	const [text, setText] = useState('');
 	const [barberId, setBarberId] = useState<string | null>(null);
+	const [barberName, setBarberName] = useState<string | null>(null);
 	const [isAuthorized, setIsAuthorized] = useState(true);
 
 	useEffect(() => {
@@ -50,6 +52,15 @@ export default function AppointmentChat() {
 				setIsAuthorized(allowed);
 				if (!allowed) return;
 				setBarberId(nextBarberId);
+				if (nextBarberId) {
+					try {
+						const barberList = await fetchBarbers();
+						const found = barberList.find((item: { id: string; user?: { name?: string } }) => item.id === nextBarberId);
+						setBarberName(found?.user?.name ?? null);
+					} catch (nameError) {
+						console.log('[Chat] load barber name error:', nameError);
+					}
+				}
 				if (nextBarberId && user.uid) {
 					const chatRef = doc(db, 'chats', appointmentId);
 					const chatSnap = await getDoc(chatRef);
@@ -111,13 +122,19 @@ export default function AppointmentChat() {
 
 	return (
 		<SafeAreaView style={styles.screen}>
+			<KeyboardAvoidingView
+				style={styles.screen}
+				behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+				keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
+			>
 			<View style={styles.header}>
 				<Pressable style={styles.backButton} onPress={() => router.back()}>
 					<Ionicons name="chevron-back" size={22} color="#ffffff" />
 				</Pressable>
 				<View>
-					<Text style={styles.title}>Message Barber</Text>
-					<Text style={styles.subtitle}>{barberId ? `Chat for appointment ${appointmentId}` : 'Loading chat...'}</Text>
+					<Text style={styles.title}>
+						{barberName ? `Chat with ${barberName}` : 'Chat'}
+					</Text>
 				</View>
 			</View>
 
@@ -164,6 +181,7 @@ export default function AppointmentChat() {
 					<Text style={styles.sendButtonText}>Send</Text>
 				</Pressable>
 			</View>
+			</KeyboardAvoidingView>
 		</SafeAreaView>
 	);
 }

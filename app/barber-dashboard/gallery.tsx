@@ -12,6 +12,7 @@ import {
 import { SafeImage } from '../../components/SafeImage';
 import * as ImagePicker from 'expo-image-picker';
 import { VideoView, useVideoPlayer } from 'expo-video';
+import { Ionicons } from '@expo/vector-icons';
 import {
 	addDoc,
 	collection,
@@ -23,15 +24,24 @@ import {
 	serverTimestamp,
 	where,
 } from 'firebase/firestore';
+import { deleteObject, ref } from 'firebase/storage';
 import { useAuth } from '@/contexts/AuthContext';
-import { auth, db } from '@/config/firebase';
-import { uploadImageToCloudinary, uploadVideoToCloudinary } from '@/services/cloudinary';
+import { auth, db, storage } from '@/config/firebase';
+import {
+	deleteCloudinaryAsset,
+	uploadImageToCloudinary,
+	uploadVideoToCloudinary,
+} from '@/services/cloudinary';
 
 type PostItem = {
 	id: string;
 	barberId?: string;
+	barberUserId?: string;
+	portfolioBarberId?: string;
+	portfolioDocId?: string;
 	mediaUrl?: string;
 	mediaType?: 'image' | 'video';
+	imageUrl?: string;
 	caption?: string;
 	createdAt?: unknown;
 	likes?: number;
@@ -72,15 +82,19 @@ export default function BarberGallery() {
 		setLoading(true);
 		try {
 			const q = query(
-				collection(db, 'posts'),
-				where('barberId', '==', user.uid),
+				collection(db, 'feed'),
+				where('userId', '==', user.uid),
 				orderBy('createdAt', 'desc')
 			);
 			const snapshot = await getDocs(q);
-			const data = snapshot.docs.map((docItem) => ({
-				id: docItem.id,
-				...(docItem.data() as PostItem),
-			}));
+			const data = snapshot.docs.map((docItem) => {
+				const raw = docItem.data() as PostItem;
+				return {
+					id: docItem.id,
+					...raw,
+					mediaUrl: raw.mediaUrl ?? raw.imageUrl,
+				};
+			});
 			setPosts(data);
 		} catch (error) {
 			console.log('[BarberGallery] load posts error:', error);
@@ -132,13 +146,52 @@ export default function BarberGallery() {
 			}
 			console.log('POST USER UID:', currentUser.uid);
 
-			const docRef = await addDoc(collection(db, 'posts'), {
+			let barberDocId: string | null = null;
+			try {
+				const barberByUser = await getDocs(
+					query(collection(db, 'barbers'), where('userId', '==', currentUser.uid))
+				);
+				if (!barberByUser.empty) {
+					barberDocId = barberByUser.docs[0].id;
+				} else {
+					const barberByUid = await getDocs(
+						query(collection(db, 'barbers'), where('uid', '==', currentUser.uid))
+					);
+					if (!barberByUid.empty) {
+						barberDocId = barberByUid.docs[0].id;
+					} else if (currentUser.email) {
+						const barberByEmail = await getDocs(
+							query(collection(db, 'barbers'), where('email', '==', currentUser.email))
+						);
+						if (!barberByEmail.empty) barberDocId = barberByEmail.docs[0].id;
+					}
+				}
+			} catch (error) {
+				console.log('[BarberGallery] lookup barber doc error:', error);
+			}
+
+			const resolvedBarberId = barberDocId ?? currentUser.uid;
+			let portfolioDocId: string | null = null;
+			if (mediaType === 'image') {
+				const portfolioRef = await addDoc(
+					collection(db, 'barbers', resolvedBarberId, 'portfolio'),
+					{
+						imageUrl: cloudinaryUrl,
+						createdAt: serverTimestamp(),
+					}
+				);
+				portfolioDocId = portfolioRef.id;
+			}
+
+			const docRef = await addDoc(collection(db, 'feed'), {
 				userId: currentUser.uid,
-				barberId: currentUser.uid,
-				uri: cloudinaryUrl,
-				type: mediaType,
+				barberId: resolvedBarberId,
+				barberUserId: currentUser.uid,
 				mediaUrl: cloudinaryUrl,
 				mediaType,
+				imageUrl: mediaType === 'image' ? cloudinaryUrl : undefined,
+				portfolioBarberId: portfolioDocId ? resolvedBarberId : undefined,
+				portfolioDocId: portfolioDocId ?? undefined,
 				caption: captionText.trim(),
 				createdAt: serverTimestamp(),
 				likes: 0,
@@ -156,7 +209,35 @@ export default function BarberGallery() {
 		}
 	};
 
-	const handleDeletePost = async (postId: string) => {
+	const deleteFromStorage = async (mediaUrl?: string, ownerId?: string) => {
+		if (!mediaUrl) return;
+		try {
+			if (mediaUrl.includes('firebasestorage.googleapis.com')) {
+				const decoded = decodeURIComponent(mediaUrl);
+				const pathPart = decoded.split('/o/')[1];
+				const objectPath = pathPart ? pathPart.split('?')[0] : '';
+				if (objectPath) {
+					await deleteObject(ref(storage, objectPath));
+					return;
+				}
+			}
+		} catch (error) {
+			console.log('[BarberGallery] firebase storage delete error:', error);
+		}
+
+		try {
+			await deleteCloudinaryAsset(mediaUrl, ownerId);
+		} catch (error) {
+			console.log('[BarberGallery] cloudinary delete error:', error);
+			throw error;
+		}
+	};
+
+	const handleDeletePost = async (post: PostItem) => {
+		if (user?.uid && post.barberUserId && post.barberUserId !== user.uid) {
+			Alert.alert('Not allowed', 'You can only delete your own media.');
+			return;
+		}
 		Alert.alert('Delete post?', 'This cannot be undone.', [
 			{ text: 'Cancel', style: 'cancel' },
 			{
@@ -164,7 +245,19 @@ export default function BarberGallery() {
 				style: 'destructive',
 				onPress: async () => {
 					try {
-						await deleteDoc(doc(db, 'posts', postId));
+						await deleteFromStorage(post.mediaUrl ?? post.imageUrl, post.barberUserId ?? user?.uid);
+						await deleteDoc(doc(db, 'feed', post.id));
+						if (post.portfolioBarberId && post.portfolioDocId) {
+							await deleteDoc(
+								doc(
+									db,
+									'barbers',
+									post.portfolioBarberId,
+									'portfolio',
+									post.portfolioDocId
+								)
+							);
+						}
 						await loadPosts();
 					} catch (error) {
 						Alert.alert('Delete failed', 'Unable to delete this post.');
@@ -204,17 +297,24 @@ export default function BarberGallery() {
 				numColumns={3}
 				keyExtractor={(item) => item.id}
 				renderItem={({ item }) => (
-					<Pressable
-						style={styles.tile}
-						onLongPress={() => handleDeletePost(item.id)}
-						delayLongPress={300}
-					>
+					<View style={styles.tile}>
 						{item.mediaUrl ? (
-							<MediaTile uri={item.mediaUrl} mediaType={item.mediaType} />
+							<View style={styles.mediaWrap}>
+								<View style={styles.mediaLayer} pointerEvents="none">
+									<MediaTile uri={item.mediaUrl} mediaType={item.mediaType} />
+								</View>
+								<Pressable
+									style={styles.deleteButton}
+									onPress={() => handleDeletePost(item)}
+									hitSlop={10}
+								>
+									<Ionicons name="trash" size={16} color="#ffffff" />
+								</Pressable>
+							</View>
 						) : (
 							<View style={styles.mediaPlaceholder} />
 						)}
-					</Pressable>
+					</View>
 				)}
 				contentContainerStyle={styles.grid}
 				ListEmptyComponent={
@@ -282,12 +382,24 @@ const styles = StyleSheet.create({
 	tile: {
 		width: '33.33%',
 		padding: 4,
+		position: 'relative',
+	},
+	mediaWrap: {
+		position: 'relative',
+		width: '100%',
+		aspectRatio: 1,
+		overflow: 'hidden',
+	},
+	mediaLayer: {
+		flex: 1,
 	},
 	media: {
 		width: '100%',
 		aspectRatio: 1,
 		borderRadius: 8,
 		backgroundColor: '#000',
+		position: 'relative',
+		zIndex: 1,
 	},
 	mediaPlaceholder: {
 		width: '100%',
@@ -302,5 +414,18 @@ const styles = StyleSheet.create({
 	emptyText: {
 		color: '#9aa0a6',
 		fontSize: 13,
+	},
+	deleteButton: {
+		position: 'absolute',
+		top: 8,
+		right: 8,
+		backgroundColor: 'rgba(0, 0, 0, 0.65)',
+		width: 28,
+		height: 28,
+		borderRadius: 14,
+		alignItems: 'center',
+		justifyContent: 'center',
+		zIndex: 10,
+		elevation: 10,
 	},
 });

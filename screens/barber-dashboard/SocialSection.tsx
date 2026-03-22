@@ -24,13 +24,11 @@ export const SocialSection = memo(function SocialSection({
 		<View style={styles.socialCard}>
 			<View style={styles.socialHeaderRow}>
 				<Text style={styles.socialTitle}>Social Links</Text>
-				{barberDocId ? (
-					<Pressable style={styles.socialEditButton} onPress={onToggleEdit}>
-						<Text style={styles.socialEditText}>
-							{isEditing ? 'Cancel' : 'Edit Social Links'}
-						</Text>
-					</Pressable>
-				) : null}
+				<Pressable style={styles.socialEditButton} onPress={onToggleEdit}>
+					<Text style={styles.socialEditText}>
+						{isEditing ? 'Cancel' : 'Edit Social Links'}
+					</Text>
+				</Pressable>
 			</View>
 			{isEditing ? (
 				<View style={styles.socialForm}>

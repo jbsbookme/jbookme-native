@@ -2,7 +2,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { View } from 'react-native';
-// import { StripeProvider } from '@stripe/stripe-react-native';
+import { StripeProvider } from '@stripe/stripe-react-native';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { requestNotificationPermissions } from '../lib/notifications';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -49,11 +49,15 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#000' }}>
-      <AuthProvider>
-        <View style={{ flex: 1, backgroundColor: '#000' }}>
-          <RootLayoutNav />
-        </View>
-      </AuthProvider>
+      <StripeProvider
+        publishableKey={process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? ''}
+      >
+        <AuthProvider>
+          <View style={{ flex: 1, backgroundColor: '#000' }}>
+            <RootLayoutNav />
+          </View>
+        </AuthProvider>
+      </StripeProvider>
     </GestureHandlerRootView>
   );
 }

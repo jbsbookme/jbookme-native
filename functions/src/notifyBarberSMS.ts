@@ -4,7 +4,9 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
 import twilio from "twilio";
 
-admin.initializeApp();
+if (admin.apps.length === 0) {
+  admin.initializeApp();
+}
 
 const accountSid = functions.config().twilio?.account_sid as string | undefined;
 const authToken = functions.config().twilio?.auth_token as string | undefined;
@@ -83,7 +85,7 @@ async function sendSms(to: string, message: string) {
   }
 }
 
-export const notifyBarberSMSV2 = onDocumentCreated("appointments/{appointmentId}", async (event) => {
+export const notifyBarberSMSV3 = onDocumentCreated("appointments/{appointmentId}", async (event) => {
   console.log("APPOINTMENT TRIGGERED:", event.params.appointmentId);
 
   const appointment = (event.data?.data() as AppointmentData | undefined) ?? {};
@@ -202,7 +204,7 @@ export const notifyBarberSMSV2 = onDocumentCreated("appointments/{appointmentId}
   }
 });
 
-export const notifyClientOnStatusChangeV2 = onDocumentUpdated(
+export const notifyClientOnStatusChangeV3 = onDocumentUpdated(
   "appointments/{appointmentId}",
   async (event) => {
     const before = (event.data?.before.data() as AppointmentData | undefined) ?? {};
@@ -356,4 +358,8 @@ export const sendAppointmentRemindersV2 = onSchedule("every 1 minutes", async ()
       });
     })
   );
+});
+
+export const sendAppointmentReminders = onSchedule("every 1 minutes", async () => {
+  console.log("sendAppointmentReminders is deprecated; use sendAppointmentRemindersV2.");
 });

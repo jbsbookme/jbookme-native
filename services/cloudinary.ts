@@ -87,3 +87,32 @@ export async function uploadImageToCloudinary(
     uploadPreset: 'jbookme_videos',
   });
 }
+
+import { auth } from '../src/config/firebase';
+
+const CLOUDINARY_DELETE_ENDPOINT = process.env.EXPO_PUBLIC_CLOUDINARY_DELETE_URL;
+
+export async function deleteCloudinaryAsset(mediaUrl: string, ownerId?: string) {
+  if (!CLOUDINARY_DELETE_ENDPOINT) {
+    console.warn('[Cloudinary] Delete endpoint not configured');
+    return;
+  }
+
+  const token = await auth.currentUser?.getIdToken();
+  if (!token) {
+    throw new Error('User not authenticated');
+  }
+
+  const response = await fetch(CLOUDINARY_DELETE_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ url: mediaUrl, ownerId }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Cloudinary delete failed');
+  }
+}

@@ -124,7 +124,7 @@ export default function BookingConfirmation() {
           </Text>
         </Pressable>
 
-        <Pressable style={styles.button} onPress={() => router.replace('/(tabs)')}>
+        <Pressable style={styles.button} onPress={() => router.replace('/(tabs)/home')}>
           <Text style={styles.buttonText}>Back to Home</Text>
         </Pressable>
       </View>

@@ -3,7 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
 	ActivityIndicator,
 	Alert,
-	Linking,
+	Modal,
 	Pressable,
 	SafeAreaView,
 	ScrollView,
@@ -36,9 +36,11 @@ type Barber = {
 	zelleEmail?: string;
 	zellePhone?: string;
 	cashappTag?: string;
+	cash?: string;
+	paymentMethods?: string[];
 };
 
-type PaymentMethod = 'zelle' | 'cashapp' | 'shop';
+type PaymentMethod = 'card';
 
 type Params = {
 	barberId?: string;
@@ -84,6 +86,8 @@ export default function PaymentMethod() {
 		parseParam<Barber>(params.barber)
 	);
 	const [isSubmitting, setIsSubmitting] = useState(false);
+	const [showPolicyModal, setShowPolicyModal] = useState(false);
+	const [policyAccepted, setPolicyAccepted] = useState(false);
 
 	useEffect(() => {
 		const loadDetails = async () => {
@@ -115,6 +119,28 @@ export default function PaymentMethod() {
 		const timeId = formatTimeIdFromDate(appointmentTime);
 		return `${userId}-${barberId}-${dateId}-${timeId}`;
 	}, [appointmentDate, appointmentTime, barber?.id, params.barberId, user?.uid]);
+
+	const barberPaymentMethods = useMemo(() => {
+		const methods = new Set<string>();
+		const rawMethods = barber?.paymentMethods ?? [];
+		rawMethods.forEach((method) => methods.add(method.toLowerCase()));
+		if (barber?.cashappTag) methods.add('cashapp');
+		if (barber?.zelleEmail || barber?.zellePhone) methods.add('zelle');
+		if (barber?.cash) methods.add('cash');
+		const labelFor = (value: string) => {
+			switch (value) {
+				case 'cashapp':
+					return 'CashApp';
+				case 'zelle':
+					return 'Zelle';
+				case 'cash':
+					return 'Cash';
+				default:
+					return value.charAt(0).toUpperCase() + value.slice(1);
+			}
+		};
+		return Array.from(methods).map(labelFor);
+	}, [barber]);
 
 	const handleCreateAppointment = async (
 		paymentMethod: PaymentMethod,
@@ -176,24 +202,6 @@ export default function PaymentMethod() {
 		if (isSubmitting) return;
 		setIsSubmitting(true);
 		try {
-			if (method === 'zelle') {
-				Alert.alert(
-					'Zelle Payment',
-					`Send payment to:\n${barber?.zelleEmail || barber?.zellePhone || 'Not available'}`
-				);
-			}
-			if (method === 'cashapp') {
-				const tag = barber?.cashappTag?.replace(/^\$/, '') ?? '';
-				if (tag) {
-					await Linking.openURL(`https://cash.app/$${tag}`);
-				} else {
-					Alert.alert('Cash App', 'Cash App tag not available.');
-				}
-			}
-			if (method === 'shop') {
-				Alert.alert('Payment', 'You will pay at the shop when you arrive.');
-			}
-
 			await handleCreateAppointment(method, 'pending');
 		} catch (error) {
 			console.error('[Payment] create appointment error:', error);
@@ -222,31 +230,22 @@ export default function PaymentMethod() {
 				<View style={styles.optionList}>
 					<Pressable
 						style={styles.optionCard}
-						onPress={() => handlePaymentSelect('zelle')}
+						onPress={() => router.push('/payment')}
 						disabled={isSubmitting}
 					>
-						<Text style={styles.optionTitle}>Zelle</Text>
-						<Text style={styles.optionSubtitle}>
-							Send payment to: {barber?.zelleEmail || barber?.zellePhone || 'Not available'}
-						</Text>
+						<Text style={styles.optionTitle}>Card (Stripe)</Text>
+						<Text style={styles.optionSubtitle}>Add or use a card to pay in-app.</Text>
 					</Pressable>
 					<Pressable
 						style={styles.optionCard}
-						onPress={() => handlePaymentSelect('cashapp')}
+						onPress={() => {
+							setPolicyAccepted(false);
+							setShowPolicyModal(true);
+						}}
 						disabled={isSubmitting}
 					>
-						<Text style={styles.optionTitle}>Cash App</Text>
-						<Text style={styles.optionSubtitle}>
-							Open link: https://cash.app/{barber?.cashappTag || '$tag'}
-						</Text>
-					</Pressable>
-					<Pressable
-						style={styles.optionCard}
-						onPress={() => handlePaymentSelect('shop')}
-						disabled={isSubmitting}
-					>
-						<Text style={styles.optionTitle}>Pay at Shop</Text>
-						<Text style={styles.optionSubtitle}>Pay when you arrive</Text>
+						<Text style={styles.optionTitle}>Confirm booking</Text>
+						<Text style={styles.optionSubtitle}>Use your saved card for this appointment.</Text>
 					</Pressable>
 				</View>
 
@@ -257,6 +256,78 @@ export default function PaymentMethod() {
 					</View>
 				) : null}
 			</ScrollView>
+
+			<Modal
+				visible={showPolicyModal}
+				transparent
+				animationType="fade"
+				onRequestClose={() => setShowPolicyModal(false)}
+			>
+				<View style={styles.policyModalBackdrop}>
+					<View style={styles.policyModalCard}>
+						<Text style={styles.policyModalTitle}>Booking Policy</Text>
+						<View style={styles.policyModalBody}>
+							<Text style={styles.policyModalBullet}>• Please arrive on time.</Text>
+							<Text style={styles.policyModalBullet}>• 10-minute late limit before cancellation.</Text>
+							<Text style={styles.policyModalBullet}>
+								• Deposits are non-refundable (if applicable).
+							</Text>
+							<Text style={styles.policyModalBullet}>
+								• No-shows may be restricted from future bookings.
+							</Text>
+						</View>
+
+						{barberPaymentMethods.length > 0 ? (
+							<View style={styles.policyModalBody}>
+								<Text style={styles.policyModalSectionTitle}>Barber accepts:</Text>
+								{barberPaymentMethods.map((method) => (
+									<Text key={method} style={styles.policyModalBullet}>
+										• {method}
+									</Text>
+								))}
+							</View>
+						) : null}
+
+						<Pressable
+							style={styles.policyCheckRow}
+							onPress={() => setPolicyAccepted((prev) => !prev)}
+						>
+							<View
+								style={[
+									styles.checkbox,
+									policyAccepted && styles.checkboxChecked,
+								]}
+							>
+								{policyAccepted ? <Text style={styles.checkboxMark}>✓</Text> : null}
+							</View>
+							<Text style={styles.policyCheckText}>I agree to the booking policy</Text>
+						</Pressable>
+
+						<View style={styles.policyModalActions}>
+							<Pressable
+								style={styles.policyCancelButton}
+								onPress={() => setShowPolicyModal(false)}
+							>
+								<Text style={styles.policyCancelText}>Cancel</Text>
+							</Pressable>
+							<Pressable
+								style={[
+									styles.policyConfirmButton,
+									!policyAccepted && styles.policyConfirmDisabled,
+								]}
+								onPress={async () => {
+									if (!policyAccepted) return;
+									setShowPolicyModal(false);
+									await handlePaymentSelect('card');
+								}}
+								disabled={!policyAccepted}
+							>
+								<Text style={styles.policyConfirmText}>Accept & Confirm</Text>
+							</Pressable>
+						</View>
+					</View>
+				</View>
+			</Modal>
 		</SafeAreaView>
 	);
 }
@@ -319,6 +390,98 @@ const styles = StyleSheet.create({
 	optionSubtitle: {
 		color: '#9aa0a6',
 		fontSize: 13,
+	},
+	policyModalBackdrop: {
+		flex: 1,
+		backgroundColor: 'rgba(0,0,0,0.6)',
+		justifyContent: 'center',
+		padding: 20,
+	},
+	policyModalCard: {
+		backgroundColor: '#000',
+		borderRadius: 16,
+		padding: 18,
+		borderWidth: 1,
+		borderColor: 'rgba(225, 6, 0, 0.85)',
+		gap: 14,
+	},
+	policyModalTitle: {
+		color: '#ffffff',
+		fontSize: 18,
+		fontWeight: '700',
+	},
+	policyModalBody: {
+		gap: 6,
+	},
+	policyModalSectionTitle: {
+		color: '#ffffff',
+		fontSize: 14,
+		fontWeight: '700',
+		marginTop: 2,
+	},
+	policyModalBullet: {
+		color: '#9aa0a6',
+		fontSize: 13,
+	},
+	policyModalActions: {
+		flexDirection: 'row',
+		gap: 10,
+	},
+	policyCancelButton: {
+		flex: 1,
+		borderWidth: 1,
+		borderColor: 'rgba(225, 6, 0, 0.85)',
+		borderRadius: 12,
+		paddingVertical: 12,
+		alignItems: 'center',
+	},
+	policyCancelText: {
+		color: '#ffffff',
+		fontSize: 13,
+		fontWeight: '700',
+	},
+	policyConfirmButton: {
+		flex: 1,
+		backgroundColor: '#e10600',
+		borderRadius: 12,
+		paddingVertical: 12,
+		alignItems: 'center',
+	},
+	policyConfirmDisabled: {
+		opacity: 0.5,
+	},
+	policyConfirmText: {
+		color: '#ffffff',
+		fontSize: 13,
+		fontWeight: '700',
+	},
+	policyCheckRow: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		gap: 10,
+	},
+	checkbox: {
+		width: 22,
+		height: 22,
+		borderRadius: 6,
+		borderWidth: 1,
+		borderColor: 'rgba(225, 6, 0, 0.85)',
+		alignItems: 'center',
+		justifyContent: 'center',
+		backgroundColor: 'rgba(0,0,0,0.35)',
+	},
+	checkboxChecked: {
+		backgroundColor: '#00f0ff',
+	},
+	checkboxMark: {
+		color: '#000000',
+		fontSize: 14,
+		fontWeight: '700',
+	},
+	policyCheckText: {
+		color: '#ffffff',
+		fontSize: 13,
+		fontWeight: '600',
 	},
 	loadingRow: {
 		marginTop: 8,
