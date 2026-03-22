@@ -7,6 +7,8 @@ export type Service = {
   price?: number;
   duration?: number;
   image?: string;
+  category?: 'men' | 'women';
+  role?: 'BARBER' | 'STYLIST';
 };
 
 type RawService = {
@@ -20,9 +22,31 @@ type RawService = {
   imageUrl?: string;
   photoUrl?: string;
   thumbnail?: string;
+  category?: string;
+  gender?: string;
+  role?: string;
 };
 
 const DEFAULT_SERVICE_IMAGE = 'https://picsum.photos/300?random=101';
+
+function normalizeCategory(value?: string): Service['category'] {
+  if (!value) return undefined;
+  const normalized = value.toLowerCase();
+  if (['men', 'male', 'm', 'barber'].includes(normalized)) return 'men';
+  if (['women', 'female', 'f', 'stylist'].includes(normalized)) return 'women';
+  return undefined;
+}
+
+function normalizeRole(value?: string, category?: Service['category']): Service['role'] {
+  if (value) {
+    const normalized = value.toLowerCase();
+    if (normalized === 'barber') return 'BARBER';
+    if (normalized === 'stylist') return 'STYLIST';
+  }
+  if (category === 'women') return 'STYLIST';
+  if (category === 'men') return 'BARBER';
+  return undefined;
+}
 
 function normalizeService(raw: RawService, index: number): Service {
   const id = raw.id ?? raw._id ?? `service-${index}`;
@@ -31,12 +55,16 @@ function normalizeService(raw: RawService, index: number): Service {
   const durationValue =
     typeof raw.duration === 'string' ? Number(raw.duration) : raw.duration;
   const image = raw.image || raw.imageUrl || raw.photoUrl || raw.thumbnail || DEFAULT_SERVICE_IMAGE;
+  const category = normalizeCategory(raw.category ?? raw.gender);
+  const role = normalizeRole(raw.role, category);
   return {
     id,
     name,
     price: Number.isFinite(priceValue) ? priceValue : undefined,
     duration: Number.isFinite(durationValue) ? durationValue : undefined,
     image,
+    category,
+    role,
   };
 }
 

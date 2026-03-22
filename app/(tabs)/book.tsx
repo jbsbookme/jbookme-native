@@ -42,6 +42,8 @@ type Service = {
 	price: number;
 	duration: number;
 	image?: string;
+	category?: CategoryKey;
+	role?: 'BARBER' | 'STYLIST';
 	gender?: 'MALE' | 'FEMALE' | 'men' | 'women';
 };
 
@@ -100,6 +102,8 @@ type RawService = {
 	image?: string;
 	imageUrl?: string;
 	gender?: string;
+	category?: string;
+	role?: string;
 };
 const TODAY_TIMES = ['3:40 PM', '4:10 PM', '5:00 PM'];
 const TOMORROW_TIMES = ['10:30 AM', '11:15 AM', '12:00 PM'];
@@ -204,6 +208,28 @@ function normalizeGender(value?: string): 'MALE' | 'FEMALE' | undefined {
 	return undefined;
 }
 
+function normalizeServiceCategory(value?: string): CategoryKey | undefined {
+	if (!value) return undefined;
+	const normalized = value.toLowerCase();
+	if (['male', 'men', 'm', 'barber'].includes(normalized)) return 'men';
+	if (['female', 'women', 'f', 'stylist'].includes(normalized)) return 'women';
+	return undefined;
+}
+
+function normalizeServiceRole(
+	value?: string,
+	category?: CategoryKey
+): 'BARBER' | 'STYLIST' | undefined {
+	if (value) {
+		const normalized = value.toLowerCase();
+		if (normalized === 'barber') return 'BARBER';
+		if (normalized === 'stylist') return 'STYLIST';
+	}
+	if (category === 'women') return 'STYLIST';
+	if (category === 'men') return 'BARBER';
+	return undefined;
+}
+
 function resolveGenderFromParam(value?: string): 'men' | 'women' | null {
 	if (!value) return null;
 	const normalized = value.toLowerCase();
@@ -286,13 +312,16 @@ function normalizeService(raw: RawService, index: number): Service {
 		typeof raw.duration === 'number'
 			? raw.duration
 			: Number(raw.duration ?? 0);
+	const category = normalizeServiceCategory(raw.category ?? raw.gender);
+	const role = normalizeServiceRole(raw.role, category);
 	return {
 		id: resolveServiceId(raw, index),
 		name: raw.name || 'Service',
 		price: Number.isFinite(price) ? price : 0,
 		duration: Number.isFinite(duration) ? duration : 0,
 		image: raw.image || raw.imageUrl,
-		gender: normalizeGender(raw.gender),
+		category,
+		role,
 	};
 }
 
@@ -473,49 +502,50 @@ export default function Book() {
 		return allBarbers.find((barber) => barber.id === selectedBarber)?.phone ?? null;
 	}, [allBarbers, selectedBarber]);
 
-	const servicesWithGender = useMemo(() => {
+	const servicesWithCategory = useMemo(() => {
 		const baseServices =
 			services && services.length > 0
 				? services
 				: [
-						{ id: '1', name: 'Haircut', price: 35 },
-						{ id: '2', name: 'Beard Trim', price: 20 },
-						{ id: '3', name: 'Color', price: 50 },
-						{ id: '4', name: 'Styling', price: 40 },
+						{ id: '1', name: 'Haircut', price: 35, category: 'men', role: 'BARBER' },
+						{ id: '2', name: 'Beard Trim', price: 20, category: 'men', role: 'BARBER' },
+						{ id: '3', name: 'Color', price: 50, category: 'women', role: 'STYLIST' },
+						{ id: '4', name: 'Styling', price: 40, category: 'women', role: 'STYLIST' },
 					];
-		return baseServices.map((service, index) => {
-			const normalizedGender = service.gender
-				? service.gender === 'MALE'
-					? 'men'
-					: service.gender === 'FEMALE'
-					? 'women'
-					: service.gender
-				: index % 2 === 0
-				? 'men'
-				: 'women';
+		return baseServices.map((service) => {
+			const category =
+				service.category ?? normalizeServiceCategory(service.gender);
+			const role = service.role ?? normalizeServiceRole(undefined, category);
 			return {
 				...service,
-				gender: normalizedGender,
+				category,
+				role,
 			};
 		});
 	}, [services]);
 
 	const filteredServices = useMemo(() => {
-		return servicesWithGender.filter((service) => {
-			if (!selectedGender) return true;
-			return service.gender === selectedGender;
+		return servicesWithCategory.filter((service) => {
+			const categoryMatch =
+				service.category ? service.category === selectedCategoryKey : false;
+			const roleMatch = service.role
+				? service.role.toUpperCase() === selectedCategoryType
+				: service.category
+				? (service.category === 'women' ? 'STYLIST' : 'BARBER') === selectedCategoryType
+				: false;
+			return categoryMatch && roleMatch;
 		});
-	}, [servicesWithGender, selectedGender]);
+	}, [servicesWithCategory, selectedCategoryKey, selectedCategoryType]);
 
 	const finalServices = useMemo(() => filteredServices, [filteredServices]);
 
 	const servicesWithImages = useMemo(() => {
-		const salt = selectedGender === 'women' ? 200 : 30;
+		const salt = selectedCategoryKey === 'women' ? 200 : 30;
 		return finalServices.map((service, index) => ({
 			...service,
 			image: service.image || `https://picsum.photos/300?random=${index + salt}`,
 		}));
-	}, [finalServices, selectedGender]);
+	}, [finalServices, selectedCategoryKey]);
 
 	useEffect(() => {
 		setSelectedService((current) => {
